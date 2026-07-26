@@ -41,7 +41,8 @@ Compose fornece Redis próprio por padrão. Keycloak não foi colocado no caminh
 interna: a porta `Authenticator` permite adicioná-lo quando houver múltiplos tenants, acesso externo
 ou necessidade de OAuth2 client credentials.
 
-Veja [a arquitetura detalhada](docs/architecture.md).
+Veja [a arquitetura detalhada](docs/architecture.md). Veja também a
+[política de adapters e failover dos consumidores](docs/consumer-adapters.md).
 
 ## API v2
 
