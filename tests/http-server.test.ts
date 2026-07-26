@@ -1,7 +1,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { LeaseManager } from "../src/application/lease-manager.js";
+import { MatrixJobRunner } from "../src/application/matrix-job-runner.js";
 import { Metrics } from "../src/application/metrics.js";
 import { ProviderRegistry } from "../src/application/provider-registry.js";
+import { SessionConnectorRegistry } from "../src/application/session-connector-registry.js";
 import type { AppConfig } from "../src/config.js";
 import type { AutomationProvider } from "../src/domain/automation-provider.js";
 import { ApiKeyAuthenticator } from "../src/infrastructure/auth/api-key-authenticator.js";
@@ -14,20 +16,24 @@ const config: AppConfig = {
   leaseConnectTimeoutMs: 10_000,
   logLevel: "silent",
   maxConcurrentBrowsers: 1,
+  maxJobParallelism: 1,
   maxLeaseDurationMs: 60_000,
   maxQueueSize: 1,
   maxQueueWaitMs: 1_000,
   metricsApiKey: apiKey,
   port: 3_000,
   publicWsUrl: "ws://browser-service:3000",
+  seleniumBrowsers: ["chromium"],
   seleniumRemoteUrl: undefined,
   shutdownTimeoutMs: 10_000,
 };
 
 function createApp() {
   const launcher: AutomationProvider = {
+    browsers: ["chromium"],
     engine: "playwright",
     launch: vi.fn(async () => ({
+      browser: "chromium" as const,
       close: vi.fn(async () => undefined),
       endpoint: "ws://127.0.0.1:9999/browser",
       engine: "playwright" as const,
@@ -45,10 +51,17 @@ function createApp() {
     maxQueueSize: config.maxQueueSize,
     metrics,
   });
+  const matrixJobRunner = new MatrixJobRunner(
+    providers,
+    new SessionConnectorRegistry([]),
+    manager,
+    { maxParallelism: 1, queueWaitMs: 1_000 },
+  );
   const app = buildServer({
     authenticator,
     config,
     leaseManager: manager,
+    matrixJobRunner,
     metrics,
     metricsAuthenticator: authenticator,
     providers,
@@ -84,11 +97,55 @@ describe("HTTP server", () => {
         await state.app.inject({
           method: "POST",
           url: "/v1/leases",
-          payload: { clientId: "consumer", engine: "playwright" },
+          payload: { browser: "chromium", clientId: "consumer", engine: "playwright" },
         })
       ).statusCode,
     ).toBe(401);
     expect((await state.app.inject({ method: "GET", url: "/metrics" })).statusCode).toBe(401);
+    expect(
+      (
+        await state.app.inject({
+          method: "POST",
+          url: "/v1/jobs/run",
+          payload: {
+            clientId: "consumer",
+            schemaVersion: 1,
+            steps: [{ action: "back" }],
+          },
+        })
+      ).statusCode,
+    ).toBe(401);
+  });
+
+  it("validates and runs matrix job requests", async () => {
+    const state = createApp();
+    apps.push(state);
+    const invalid = await state.app.inject({
+      method: "POST",
+      url: "/v1/jobs/run",
+      headers: { "x-api-key": apiKey },
+      payload: { clientId: "consumer", schemaVersion: 1, steps: [] },
+    });
+    expect(invalid.statusCode).toBe(400);
+
+    const executed = await state.app.inject({
+      method: "POST",
+      url: "/v1/jobs/run",
+      headers: { "x-api-key": apiKey },
+      payload: {
+        browsers: ["chromium"],
+        clientId: "consumer",
+        drivers: ["playwright"],
+        schemaVersion: 1,
+        steps: [{ action: "back" }],
+      },
+    });
+    expect(executed.statusCode).toBe(200);
+    expect(executed.json()).toMatchObject({
+      clientId: "consumer",
+      executions: [{ browser: "chromium", driver: "playwright", status: "failed" }],
+      status: "failed",
+    });
   });
 
   it("lists only configured engines", async () => {
@@ -99,7 +156,10 @@ describe("HTTP server", () => {
       url: "/v1/engines",
       headers: { authorization: `Bearer ${apiKey}` },
     });
-    expect(response.json()).toEqual({ engines: ["playwright"] });
+    expect(response.json()).toEqual({
+      capabilities: [{ browser: "chromium", engine: "playwright" }],
+      engines: ["playwright"],
+    });
   });
 
   it("creates and deletes a lease", async () => {
@@ -109,7 +169,12 @@ describe("HTTP server", () => {
       method: "POST",
       url: "/v1/leases",
       headers: { authorization: `Bearer ${apiKey}` },
-      payload: { clientId: "consumer", engine: "playwright", waitTimeoutMs: 0 },
+      payload: {
+        browser: "chromium",
+        clientId: "consumer",
+        engine: "playwright",
+        waitTimeoutMs: 0,
+      },
     });
     expect(created.statusCode).toBe(201);
     const body = created.json<{
@@ -135,7 +200,12 @@ describe("HTTP server", () => {
       method: "POST",
       url: "/v1/leases",
       headers: { "x-api-key": apiKey },
-      payload: { clientId: "!", engine: "playwright", waitTimeoutMs: 2_000 },
+      payload: {
+        browser: "chromium",
+        clientId: "!",
+        engine: "playwright",
+        waitTimeoutMs: 2_000,
+      },
     });
     expect(response.statusCode).toBe(400);
   });
@@ -147,17 +217,30 @@ describe("HTTP server", () => {
       method: "POST",
       url: "/v1/leases",
       headers: { "x-api-key": apiKey },
-      payload: { clientId: "consumer", engine: "selenium" },
+      payload: { browser: "chromium", clientId: "consumer", engine: "selenium" },
     });
     expect(response.statusCode).toBe(422);
     expect(response.json<{ error: string }>().error).toContain("not available");
+  });
+
+  it("rejects Puppeteer Firefox as a reconnectable native lease", async () => {
+    const state = createApp();
+    apps.push(state);
+    const response = await state.app.inject({
+      method: "POST",
+      url: "/v1/leases",
+      headers: { "x-api-key": apiKey },
+      payload: { browser: "firefox", clientId: "consumer", engine: "puppeteer" },
+    });
+    expect(response.statusCode).toBe(422);
+    expect(response.json<{ error: string }>().error).toContain("/v1/jobs/run");
   });
 
   it("returns 429 when immediate capacity is exhausted", async () => {
     const state = createApp();
     apps.push(state);
     const headers = { "x-api-key": apiKey };
-    const payload = { clientId: "consumer", engine: "playwright" };
+    const payload = { browser: "chromium", clientId: "consumer", engine: "playwright" };
     expect(
       (await state.app.inject({ method: "POST", url: "/v1/leases", headers, payload })).statusCode,
     ).toBe(201);
@@ -178,7 +261,7 @@ describe("HTTP server", () => {
       method: "POST",
       url: "/v1/leases",
       headers: { "x-api-key": apiKey },
-      payload: { clientId: "consumer", engine: "playwright" },
+      payload: { browser: "chromium", clientId: "consumer", engine: "playwright" },
     });
     const leaseId = created.json<{ leaseId: string }>().leaseId;
     expect(

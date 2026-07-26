@@ -3,8 +3,10 @@ import type { AddressInfo } from "node:net";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { WebSocket, WebSocketServer } from "ws";
 import { LeaseManager } from "../src/application/lease-manager.js";
+import { MatrixJobRunner } from "../src/application/matrix-job-runner.js";
 import { Metrics } from "../src/application/metrics.js";
 import { ProviderRegistry } from "../src/application/provider-registry.js";
+import { SessionConnectorRegistry } from "../src/application/session-connector-registry.js";
 import type { AppConfig } from "../src/config.js";
 import type { AutomationProvider } from "../src/domain/automation-provider.js";
 import { ApiKeyAuthenticator } from "../src/infrastructure/auth/api-key-authenticator.js";
@@ -27,8 +29,10 @@ describe("WebSocket relay", () => {
     });
 
     const provider: AutomationProvider = {
+      browsers: ["chromium"],
       engine: "playwright",
       launch: vi.fn(async () => ({
+        browser: "chromium" as const,
         close: async () => undefined,
         endpoint: `ws://127.0.0.1:${String(upstreamPort)}`,
         engine: "playwright" as const,
@@ -51,20 +55,29 @@ describe("WebSocket relay", () => {
       leaseConnectTimeoutMs: 10_000,
       logLevel: "silent",
       maxConcurrentBrowsers: 1,
+      maxJobParallelism: 1,
       maxLeaseDurationMs: 60_000,
       maxQueueSize: 1,
       maxQueueWaitMs: 1_000,
       metricsApiKey: apiKey,
       port: 0,
       publicWsUrl: undefined,
+      seleniumBrowsers: ["chromium"],
       seleniumRemoteUrl: undefined,
       shutdownTimeoutMs: 10_000,
     };
     const authenticator = new ApiKeyAuthenticator(apiKey);
+    const matrixJobRunner = new MatrixJobRunner(
+      providers,
+      new SessionConnectorRegistry([]),
+      manager,
+      { maxParallelism: 1, queueWaitMs: 1_000 },
+    );
     const app = buildServer({
       authenticator,
       config,
       leaseManager: manager,
+      matrixJobRunner,
       metrics,
       metricsAuthenticator: authenticator,
       providers,
@@ -83,7 +96,11 @@ describe("WebSocket relay", () => {
     );
 
     const response = await fetch(`http://127.0.0.1:${String(servicePort)}/v1/leases`, {
-      body: JSON.stringify({ clientId: "relay-test", engine: "playwright" }),
+      body: JSON.stringify({
+        browser: "chromium",
+        clientId: "relay-test",
+        engine: "playwright",
+      }),
       headers: {
         authorization: `Bearer ${apiKey}`,
         "content-type": "application/json",

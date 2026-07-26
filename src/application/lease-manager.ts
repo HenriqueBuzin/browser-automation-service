@@ -1,5 +1,6 @@
 import { randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import type {
+  AutomationBrowser,
   AutomationEngine,
   AutomationProtocol,
   ProviderSession,
@@ -19,6 +20,7 @@ import { ProviderRegistry } from "./provider-registry.js";
 type LeaseState = "starting" | "awaiting_connection" | "connecting" | "connected" | "closing";
 
 type Lease = {
+  browser: AutomationBrowser;
   clientId: string;
   connectTimer?: NodeJS.Timeout;
   engine: AutomationEngine;
@@ -31,6 +33,7 @@ type Lease = {
 };
 
 type PendingRequest = {
+  browser: AutomationBrowser;
   clientId: string;
   engine: AutomationEngine;
   reject: (reason: Error) => void;
@@ -39,6 +42,7 @@ type PendingRequest = {
 };
 
 export type LeaseGrant = {
+  browser: AutomationBrowser;
   directEndpoint?: string;
   engine: AutomationEngine;
   expiresAt: Date;
@@ -49,6 +53,7 @@ export type LeaseGrant = {
 
 export type LeaseConnection = {
   id: string;
+  nativeHandle?: unknown;
   protocol: Exclude<AutomationProtocol, "webdriver">;
   wsEndpoint: string;
 };
@@ -84,11 +89,14 @@ export class LeaseManager {
   public async request(
     clientId: string,
     engine: AutomationEngine,
+    browser: AutomationBrowser,
     waitTimeoutMs: number,
   ): Promise<LeaseGrant> {
     this.#options.metrics.increment("browser_leases_requested_total");
     if (this.#shuttingDown) throw new ServiceShuttingDownError();
-    if (this.#leases.size < this.#options.maxConcurrent) return this.#allocate(clientId, engine);
+    if (this.#leases.size < this.#options.maxConcurrent) {
+      return this.#allocate(clientId, engine, browser);
+    }
     if (waitTimeoutMs === 0) throw new CapacityError("No browser capacity is available", 1);
     if (this.#queue.length >= this.#options.maxQueueSize) {
       this.#options.metrics.increment("browser_queue_rejections_total");
@@ -97,6 +105,7 @@ export class LeaseManager {
 
     return new Promise<LeaseGrant>((resolve, reject) => {
       const pending: PendingRequest = {
+        browser,
         clientId,
         engine,
         reject,
@@ -123,7 +132,14 @@ export class LeaseManager {
     }
     if (lease.connectTimer) clearTimeout(lease.connectTimer);
     lease.state = "connecting";
-    return { id, protocol: lease.session.protocol, wsEndpoint: lease.session.endpoint };
+    return {
+      id,
+      ...(lease.session.nativeHandle === undefined
+        ? {}
+        : { nativeHandle: lease.session.nativeHandle }),
+      protocol: lease.session.protocol,
+      wsEndpoint: lease.session.endpoint,
+    };
   }
 
   public markConnected(id: string): void {
@@ -163,15 +179,19 @@ export class LeaseManager {
     await Promise.allSettled([...this.#leases.keys()].map((id) => this.release(id)));
   }
 
-  async #allocate(clientId: string, engine: AutomationEngine): Promise<LeaseGrant> {
+  async #allocate(
+    clientId: string,
+    engine: AutomationEngine,
+    browser: AutomationBrowser,
+  ): Promise<LeaseGrant> {
     const id = randomUUID();
     const token = randomBytes(32).toString("base64url");
     const expiresAt = new Date(Date.now() + this.#options.maxLeaseDurationMs);
-    const lease: Lease = { clientId, engine, expiresAt, id, state: "starting", token };
+    const lease: Lease = { browser, clientId, engine, expiresAt, id, state: "starting", token };
     this.#leases.set(id, lease);
 
     try {
-      const session = await this.#providers.get(engine).launch(id);
+      const session = await this.#providers.getForBrowser(engine, browser).launch(id, browser);
       lease.session = session;
       lease.state = session.protocol === "webdriver" ? "connected" : "awaiting_connection";
       session.onClose(() => void this.release(id));
@@ -188,6 +208,7 @@ export class LeaseManager {
       this.#options.metrics.increment("browser_leases_granted_total");
       return {
         ...(session.protocol === "webdriver" ? { directEndpoint: session.endpoint } : {}),
+        browser,
         engine,
         expiresAt,
         id,
@@ -207,7 +228,10 @@ export class LeaseManager {
     const pending = this.#queue.shift();
     if (!pending) return;
     clearTimeout(pending.timer);
-    void this.#allocate(pending.clientId, pending.engine).then(pending.resolve, pending.reject);
+    void this.#allocate(pending.clientId, pending.engine, pending.browser).then(
+      pending.resolve,
+      pending.reject,
+    );
   }
 
   #getAuthorized(id: string, token: string): Lease {

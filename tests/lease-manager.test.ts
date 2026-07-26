@@ -15,6 +15,7 @@ function harness(maxConcurrent = 1, maxQueueSize = 2) {
   const close = vi.fn(async () => undefined);
   let closeListener = (): void => undefined;
   const browser: ProviderSession = {
+    browser: "chromium",
     close,
     endpoint: "ws://127.0.0.1:4567/browser",
     engine: "playwright",
@@ -24,6 +25,7 @@ function harness(maxConcurrent = 1, maxQueueSize = 2) {
     protocol: "playwright",
   };
   const launcher: AutomationProvider = {
+    browsers: ["chromium"],
     engine: "playwright",
     launch: vi.fn(async () => browser),
   };
@@ -41,7 +43,7 @@ function harness(maxConcurrent = 1, maxQueueSize = 2) {
 describe("LeaseManager", () => {
   it("grants, connects and releases an isolated browser", async () => {
     const { close, manager } = harness();
-    const lease = await manager.request("client-one", "playwright", 0);
+    const lease = await manager.request("client-one", "playwright", "chromium", 0);
     expect(manager.activeCount).toBe(1);
     expect(manager.connect(lease.id, lease.token).wsEndpoint).toContain("4567");
     manager.markConnected(lease.id);
@@ -52,7 +54,7 @@ describe("LeaseManager", () => {
 
   it("rejects invalid tokens and repeated connections", async () => {
     const { manager } = harness();
-    const lease = await manager.request("client-one", "playwright", 0);
+    const lease = await manager.request("client-one", "playwright", "chromium", 0);
     expect(() => manager.connect(lease.id, "wrong")).toThrow(InvalidLeaseTokenError);
     manager.connect(lease.id, lease.token);
     expect(() => manager.connect(lease.id, lease.token)).toThrow(LeaseStateError);
@@ -61,8 +63,8 @@ describe("LeaseManager", () => {
 
   it("queues FIFO and allocates when capacity is released", async () => {
     const { manager } = harness();
-    const first = await manager.request("first", "playwright", 0);
-    const secondPromise = manager.request("second", "playwright", 1_000);
+    const first = await manager.request("first", "playwright", "chromium", 0);
+    const secondPromise = manager.request("second", "playwright", "chromium", 1_000);
     expect(manager.queuedCount).toBe(1);
     await manager.release(first.id);
     const second = await secondPromise;
@@ -72,9 +74,11 @@ describe("LeaseManager", () => {
 
   it("rejects immediate and over-capacity queue requests", async () => {
     const { manager } = harness(1, 0);
-    await manager.request("first", "playwright", 0);
-    await expect(manager.request("second", "playwright", 0)).rejects.toBeInstanceOf(CapacityError);
-    await expect(manager.request("second", "playwright", 100)).rejects.toBeInstanceOf(
+    await manager.request("first", "playwright", "chromium", 0);
+    await expect(manager.request("second", "playwright", "chromium", 0)).rejects.toBeInstanceOf(
+      CapacityError,
+    );
+    await expect(manager.request("second", "playwright", "chromium", 100)).rejects.toBeInstanceOf(
       QueueFullError,
     );
     await manager.shutdown();
@@ -83,8 +87,8 @@ describe("LeaseManager", () => {
   it("times out a queued request", async () => {
     vi.useFakeTimers();
     const { manager } = harness();
-    await manager.request("first", "playwright", 0);
-    const waiting = manager.request("second", "playwright", 100);
+    await manager.request("first", "playwright", "chromium", 0);
+    const waiting = manager.request("second", "playwright", "chromium", 100);
     const expectation = expect(waiting).rejects.toBeInstanceOf(QueueTimeoutError);
     await vi.advanceTimersByTimeAsync(100);
     await expectation;
@@ -94,13 +98,14 @@ describe("LeaseManager", () => {
 
   it("releases the lease when the browser exits", async () => {
     const { closeBrowser, manager } = harness();
-    await manager.request("client-one", "playwright", 0);
+    await manager.request("client-one", "playwright", "chromium", 0);
     closeBrowser();
     await vi.waitFor(() => expect(manager.activeCount).toBe(0));
   });
 
   it("frees capacity after a launch failure", async () => {
     const launcher: AutomationProvider = {
+      browsers: ["chromium"],
       engine: "playwright",
       launch: vi.fn().mockRejectedValueOnce(new Error("launch failed")),
     };
@@ -111,14 +116,18 @@ describe("LeaseManager", () => {
       maxQueueSize: 1,
       metrics: new Metrics(),
     });
-    await expect(manager.request("client-one", "playwright", 0)).rejects.toThrow("launch failed");
+    await expect(manager.request("client-one", "playwright", "chromium", 0)).rejects.toThrow(
+      "launch failed",
+    );
     expect(manager.activeCount).toBe(0);
   });
 
   it("returns a direct endpoint for a WebDriver provider", async () => {
     const selenium: AutomationProvider = {
+      browsers: ["chromium"],
       engine: "selenium",
       launch: vi.fn(async () => ({
+        browser: "chromium" as const,
         close: vi.fn(async () => undefined),
         endpoint: "http://selenium:4444/wd/hub",
         engine: "selenium" as const,
@@ -133,7 +142,7 @@ describe("LeaseManager", () => {
       maxQueueSize: 1,
       metrics: new Metrics(),
     });
-    const lease = await manager.request("selenium-client", "selenium", 0);
+    const lease = await manager.request("selenium-client", "selenium", "chromium", 0);
     expect(lease).toMatchObject({
       directEndpoint: "http://selenium:4444/wd/hub",
       engine: "selenium",

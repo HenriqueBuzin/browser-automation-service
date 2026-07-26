@@ -3,7 +3,10 @@ import { SeleniumProvider } from "../src/infrastructure/providers/selenium-provi
 
 describe("SeleniumProvider", () => {
   it("returns the configured WebDriver endpoint", async () => {
-    const session = await new SeleniumProvider("http://selenium:4444/wd/hub").launch();
+    const session = await new SeleniumProvider("http://selenium:4444/wd/hub").launch(
+      "lease",
+      "chromium",
+    );
     expect(session).toMatchObject({
       endpoint: "http://selenium:4444/wd/hub",
       engine: "selenium",

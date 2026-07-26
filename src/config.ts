@@ -1,17 +1,22 @@
+import type { AutomationBrowser } from "./domain/automation-provider.js";
 import { z } from "./validation.js";
+
+const seleniumBrowserNames = ["chromium", "firefox", "edge"] as const;
 
 export type AppConfig = {
   apiKey: string;
   host: string;
   leaseConnectTimeoutMs: number;
-  maxLeaseDurationMs: number;
   logLevel: string;
   maxConcurrentBrowsers: number;
+  maxJobParallelism: number;
+  maxLeaseDurationMs: number;
   maxQueueSize: number;
   maxQueueWaitMs: number;
   metricsApiKey: string;
   port: number;
   publicWsUrl: string | undefined;
+  seleniumBrowsers: AutomationBrowser[];
   seleniumRemoteUrl: string | undefined;
   shutdownTimeoutMs: number;
 };
@@ -27,6 +32,17 @@ function integer(name: string, value: string | undefined, fallback: number, min:
 function text(value: string | undefined, fallback: string): string {
   const normalized = value?.trim();
   return normalized === undefined || normalized === "" ? fallback : normalized;
+}
+
+function browserList(value: string | undefined): AutomationBrowser[] {
+  if (!value?.trim()) return ["chromium"];
+  const browsers = [...new Set(value.split(",").map((entry) => entry.trim()))];
+  for (const browser of browsers) {
+    if (!seleniumBrowserNames.includes(browser as (typeof seleniumBrowserNames)[number])) {
+      throw new Error(`SELENIUM_BROWSERS contains unsupported browser '${browser}'`);
+    }
+  }
+  return browsers as AutomationBrowser[];
 }
 
 export function loadConfig(environment: NodeJS.ProcessEnv = process.env): AppConfig {
@@ -50,6 +66,7 @@ export function loadConfig(environment: NodeJS.ProcessEnv = process.env): AppCon
       1_000,
     ),
     logLevel: text(environment.LOG_LEVEL, "info"),
+    maxJobParallelism: integer("MAX_JOB_PARALLELISM", environment.MAX_JOB_PARALLELISM, 2, 1),
     maxLeaseDurationMs: integer(
       "MAX_LEASE_DURATION_MS",
       environment.MAX_LEASE_DURATION_MS,
@@ -67,7 +84,8 @@ export function loadConfig(environment: NodeJS.ProcessEnv = process.env): AppCon
     metricsApiKey: text(environment.METRICS_API_KEY, apiKey),
     port: integer("PORT", environment.PORT, 3_000, 1),
     publicWsUrl,
-    seleniumRemoteUrl: environment.SELENIUM_REMOTE_URL?.trim().replace(/\/+$/, ""),
+    seleniumBrowsers: browserList(environment.SELENIUM_BROWSERS),
+    seleniumRemoteUrl: environment.BROWSER_SELENIUM_REMOTE_URL?.trim().replace(/\/+$/, ""),
     shutdownTimeoutMs: integer(
       "SHUTDOWN_TIMEOUT_MS",
       environment.SHUTDOWN_TIMEOUT_MS,

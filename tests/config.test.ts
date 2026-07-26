@@ -9,9 +9,11 @@ describe("loadConfig", () => {
     expect(config).toMatchObject({
       apiKey,
       maxConcurrentBrowsers: 2,
+      maxJobParallelism: 2,
       maxLeaseDurationMs: 900_000,
       maxQueueSize: 20,
       port: 3000,
+      seleniumBrowsers: ["chromium"],
     });
     expect(config.publicWsUrl).toBeUndefined();
   });
@@ -25,6 +27,22 @@ describe("loadConfig", () => {
     expect(() => loadConfig({ API_KEY: apiKey, PORT: "nope" })).toThrow("PORT");
     expect(() => loadConfig({ API_KEY: apiKey, PUBLIC_WS_URL: "https://example.test" })).toThrow(
       "PUBLIC_WS_URL",
+    );
+  });
+
+  it("parses and validates Selenium browser capabilities", () => {
+    const config = loadConfig({
+      API_KEY: apiKey,
+      BROWSER_SELENIUM_REMOTE_URL: "http://selenium-hub:4444/wd/hub/",
+      SELENIUM_BROWSERS: "chromium,firefox,edge,chromium",
+    });
+    expect(config.seleniumBrowsers).toEqual(["chromium", "firefox", "edge"]);
+    expect(config.seleniumRemoteUrl).toBe("http://selenium-hub:4444/wd/hub");
+    expect(() => loadConfig({ API_KEY: apiKey, SELENIUM_BROWSERS: "safari" })).toThrow(
+      "SELENIUM_BROWSERS",
+    );
+    expect(() => loadConfig({ API_KEY: apiKey, SELENIUM_BROWSERS: "webkit" })).toThrow(
+      "SELENIUM_BROWSERS",
     );
   });
 });

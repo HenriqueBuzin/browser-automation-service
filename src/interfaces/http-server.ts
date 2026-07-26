@@ -4,7 +4,12 @@ import Fastify, { type FastifyInstance, type FastifyRequest } from "fastify";
 import { WebSocket, WebSocketServer } from "ws";
 import packageJson from "../../package.json" with { type: "json" };
 import type { AuthenticationScope, Authenticator } from "../application/authenticator.js";
-import { automationEngines, type AutomationEngine } from "../domain/automation-provider.js";
+import {
+  automationBrowsers,
+  automationEngines,
+  type AutomationBrowser,
+  type AutomationEngine,
+} from "../domain/automation-provider.js";
 import type { AppConfig } from "../config.js";
 import {
   CapacityError,
@@ -16,13 +21,17 @@ import {
   ServiceShuttingDownError,
 } from "../domain/errors.js";
 import type { LeaseManager } from "../application/lease-manager.js";
+import type { MatrixJobRunner } from "../application/matrix-job-runner.js";
 import type { Metrics } from "../application/metrics.js";
 import {
   ProviderNotAvailableError,
   type ProviderRegistry,
 } from "../application/provider-registry.js";
+import { BrowserNotSupportedError } from "../application/provider-registry.js";
+import { parseAutomationJob } from "./job-parser.js";
 
 type CreateLeaseBody = {
+  browser?: unknown;
   clientId?: unknown;
   engine?: unknown;
   waitTimeoutMs?: unknown;
@@ -32,6 +41,7 @@ type ServerDependencies = {
   authenticator: Authenticator;
   config: AppConfig;
   leaseManager: LeaseManager;
+  matrixJobRunner: MatrixJobRunner;
   metrics: Metrics;
   metricsAuthenticator: Authenticator;
   providers: ProviderRegistry;
@@ -56,6 +66,13 @@ function parseEngine(value: unknown): AutomationEngine {
     throw new TypeError(`engine must be one of: ${automationEngines.join(", ")}`);
   }
   return value as AutomationEngine;
+}
+
+function parseBrowser(value: unknown): AutomationBrowser {
+  if (typeof value !== "string" || !automationBrowsers.includes(value as AutomationBrowser)) {
+    throw new TypeError(`browser must be one of: ${automationBrowsers.join(", ")}`);
+  }
+  return value as AutomationBrowser;
 }
 
 function parseWaitTimeout(value: unknown, maximum: number): number {
@@ -88,6 +105,7 @@ export function buildServer({
   authenticator,
   config,
   leaseManager,
+  matrixJobRunner,
   metrics,
   metricsAuthenticator,
   providers,
@@ -103,7 +121,7 @@ export function buildServer({
     if (!(await authorize(authenticator, request, "engines:read"))) {
       return reply.code(401).send({ error: "Unauthorized" });
     }
-    return { engines: providers.engines() };
+    return { capabilities: providers.capabilities(), engines: providers.engines() };
   });
   app.get("/health/ready", async (_request, reply) => {
     if (leaseManager.activeCount > config.maxConcurrentBrowsers) {
@@ -121,6 +139,22 @@ export function buildServer({
       .send(metrics.render(leaseManager.activeCount, leaseManager.queuedCount));
   });
 
+  app.post<{ Body: unknown }>("/v1/jobs/run", async (request, reply) => {
+    if (!(await authorize(authenticator, request, "jobs:run"))) {
+      return reply.code(401).send({ error: "Unauthorized" });
+    }
+    try {
+      const job = parseAutomationJob(request.body);
+      return await matrixJobRunner.run(job);
+    } catch (error) {
+      if (error instanceof TypeError) return reply.code(400).send({ error: error.message });
+      request.log.error({ error }, "matrix job failed");
+      return reply
+        .code(500)
+        .send({ error: error instanceof Error ? error.message : "Unknown error" });
+    }
+  });
+
   app.post<{ Body: CreateLeaseBody | undefined }>("/v1/leases", async (request, reply) => {
     if (!(await authorize(authenticator, request, "leases:write"))) {
       return reply.code(401).send({ error: "Unauthorized" });
@@ -129,8 +163,15 @@ export function buildServer({
     try {
       const clientId = parseClientId(request.body?.clientId);
       const engine = parseEngine(request.body?.engine);
+      const browser = parseBrowser(request.body?.browser);
+      if (engine === "puppeteer" && browser === "firefox") {
+        return reply.code(422).send({
+          error:
+            "Puppeteer/Firefox is available through /v1/jobs/run but does not support reconnectable native leases",
+        });
+      }
       const waitTimeoutMs = parseWaitTimeout(request.body?.waitTimeoutMs, config.maxQueueWaitMs);
-      const lease = await leaseManager.request(clientId, engine, waitTimeoutMs);
+      const lease = await leaseManager.request(clientId, engine, browser, waitTimeoutMs);
       const connection =
         lease.protocol === "webdriver"
           ? { endpoint: lease.directEndpoint, protocol: lease.protocol }
@@ -140,6 +181,7 @@ export function buildServer({
             };
       return reply.code(201).send({
         connection,
+        browser: lease.browser,
         engine: lease.engine,
         expiresAt: lease.expiresAt.toISOString(),
         leaseId: lease.id,
@@ -147,11 +189,12 @@ export function buildServer({
         versions: {
           playwright: packageJson.dependencies.playwright,
           puppeteer: packageJson.dependencies["puppeteer-core"],
+          selenium: packageJson.dependencies["selenium-webdriver"],
         },
       });
     } catch (error) {
       if (error instanceof TypeError) return reply.code(400).send({ error: error.message });
-      if (error instanceof ProviderNotAvailableError) {
+      if (error instanceof ProviderNotAvailableError || error instanceof BrowserNotSupportedError) {
         return reply.code(422).send({ error: error.message });
       }
       const status = errorStatus(error);

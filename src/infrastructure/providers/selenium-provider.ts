@@ -1,4 +1,8 @@
-import type { AutomationProvider, ProviderSession } from "../../domain/automation-provider.js";
+import type {
+  AutomationBrowser,
+  AutomationProvider,
+  ProviderSession,
+} from "../../domain/automation-provider.js";
 
 /**
  * Selenium Grid already owns browser processes, its session queue and cleanup.
@@ -7,10 +11,14 @@ import type { AutomationProvider, ProviderSession } from "../../domain/automatio
 export class SeleniumProvider implements AutomationProvider {
   public readonly engine = "selenium";
 
-  public constructor(private readonly remoteUrl: string) {}
+  public constructor(
+    private readonly remoteUrl: string,
+    public readonly browsers: readonly AutomationBrowser[] = ["chromium"],
+  ) {}
 
-  public async launch(): Promise<ProviderSession> {
+  public async launch(_leaseId: string, browser: AutomationBrowser): Promise<ProviderSession> {
     return {
+      browser,
       close: async () => undefined,
       endpoint: this.remoteUrl,
       engine: this.engine,

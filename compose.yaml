@@ -26,16 +26,58 @@ services:
           memory: 2g
           cpus: "2.0"
 
-  selenium-chromium:
-    image: selenium/standalone-chromium:4.46.0
-    profiles: ["selenium"]
+  selenium-hub:
+    image: selenium/hub:4.46.0
+    profiles: ["selenium", "selenium-all"]
     restart: unless-stopped
-    shm_size: "1gb"
-    environment:
-      SE_NODE_MAX_SESSIONS: "2"
-      SE_NODE_SESSION_TIMEOUT: "900"
     expose:
+      - "4442"
+      - "4443"
       - "4444"
+    networks:
+      - browser-automation
+    security_opt:
+      - no-new-privileges:true
+
+  selenium-chromium:
+    image: selenium/node-chromium:4.46.0
+    profiles: ["selenium", "selenium-all"]
+    restart: unless-stopped
+    depends_on:
+      - selenium-hub
+    shm_size: "1gb"
+    environment: &selenium-node-environment
+      SE_EVENT_BUS_HOST: selenium-hub
+      SE_EVENT_BUS_PUBLISH_PORT: "4442"
+      SE_EVENT_BUS_SUBSCRIBE_PORT: "4443"
+      SE_NODE_MAX_SESSIONS: "1"
+      SE_NODE_SESSION_TIMEOUT: "900"
+    networks:
+      - browser-automation
+    security_opt:
+      - no-new-privileges:true
+
+  selenium-firefox:
+    image: selenium/node-firefox:4.46.0
+    profiles: ["selenium-all"]
+    restart: unless-stopped
+    depends_on:
+      - selenium-hub
+    shm_size: "1gb"
+    environment: *selenium-node-environment
+    networks:
+      - browser-automation
+    security_opt:
+      - no-new-privileges:true
+
+  selenium-edge:
+    image: selenium/node-edge:4.46.0
+    profiles: ["selenium-all"]
+    restart: unless-stopped
+    depends_on:
+      - selenium-hub
+    shm_size: "1gb"
+    environment: *selenium-node-environment
     networks:
       - browser-automation
     security_opt:

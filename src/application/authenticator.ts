@@ -3,7 +3,7 @@ export type AuthenticationCredentials = {
   authorization: string | undefined;
 };
 
-export type AuthenticationScope = "engines:read" | "leases:write" | "metrics:read";
+export type AuthenticationScope = "engines:read" | "jobs:run" | "leases:write" | "metrics:read";
 
 export type Authenticator = {
   authorize: (

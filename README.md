@@ -1,61 +1,103 @@
 # Browser Automation Service
 
-Plataforma compartilhada de automação de navegadores para a VPS. Um control plane comum cuida de
-autenticação, leases, fila, limites e métricas; adapters preservam o protocolo nativo de cada
-engine.
+Serviço compartilhado de automação de navegadores para a VPS. Um control plane comum cuida de
+autenticação, leases, fila, limites e métricas. Há dois contratos:
 
-| Engine     | Protocolo entregue          | Estado                     |
-| ---------- | --------------------------- | -------------------------- |
-| Playwright | Playwright WebSocket        | implementado               |
-| Puppeteer  | Chrome DevTools (CDP)       | implementado               |
-| Selenium   | WebDriver via Selenium Grid | opcional no Docker Compose |
+- **jobs portáveis:** um JSON declarativo é convertido para Playwright, Puppeteer ou Selenium e pode
+  ser executado em toda a matriz suportada;
+- **sessões nativas:** o consumidor escolhe driver e navegador e continua usando a biblioteca
+  original por WebSocket/CDP/WebDriver.
 
-O consumidor escolhe `engine` ao solicitar o lease. A automação existente continua usando a
-biblioteca original; muda somente `launch()` para `connect()`/remote driver.
+| Driver     | Protocolo nativo            | Navegadores da facade                     |
+| ---------- | --------------------------- | ----------------------------------------- |
+| Playwright | Playwright WebSocket        | Chromium, Firefox e WebKit                |
+| Puppeteer  | Chrome DevTools / BiDi      | Chromium e Firefox                        |
+| Selenium   | WebDriver via Selenium Grid | configurável: Chromium, Firefox e/ou Edge |
 
-## Por que não existe um “conversor universal”
-
-Playwright, CDP e WebDriver não possuem capacidades idênticas. Traduzir comandos arbitrários entre
-eles perderia recursos como contexts, tracing, interceptação de rede e WebDriver BiDi.
-
-A arquitetura oferece dois níveis:
-
-1. **Sessão nativa:** já implementada; preserva todas as capacidades do engine e exige alteração
-   apenas no ponto de conexão.
-2. **Facade de jobs:** extensão planejada para ações portáveis e limitadas, como `navigate`,
-   `click`, `fill` e `screenshot`. Cada adapter traduzirá essas ações. Não aceitará JavaScript
-   arbitrário.
-
-Assim, fluxos complexos permanecem fiéis ao engine e fluxos simples poderão trocar de engine sem
-alterar sua regra de negócio.
+Combinações fisicamente inexistentes, como Puppeteer + WebKit, aparecem como `unsupported`; o
+serviço nunca finge ter executado uma combinação.
 
 Veja [a arquitetura detalhada](docs/architecture.md).
 
 ## Tecnologias
 
 - Node.js 24 e TypeScript estrito;
-- Fastify para o control plane HTTP;
-- Playwright e Puppeteer/CDP para providers locais;
-- Selenium Grid opcional para WebDriver;
-- fila FIFO em memória na implantação de uma única instância;
-- Docker com processos e limites isolados.
-
-Node/TypeScript reduz bridges porque os consumidores atuais e dois dos três engines já são nativos
-desse ecossistema.
+- Fastify para HTTP e WebSocket;
+- Playwright, Puppeteer e Selenium WebDriver;
+- Selenium Grid opcional no Docker Compose;
+- fila FIFO em memória em uma única réplica;
+- Docker com processos, memória e CPU limitados.
 
 ## API
 
 Todos os endpoints, exceto health checks, exigem `Authorization: Bearer <API_KEY>` ou
 `X-API-Key: <API_KEY>`.
 
-### Engines disponíveis
+### Descobrir capacidades
 
 ```http
 GET /v1/engines
 Authorization: Bearer ...
 ```
 
-### Solicitar uma sessão
+A resposta informa os drivers habilitados e cada combinação `driver + browser` disponível.
+
+### Executar um job na matriz
+
+```http
+POST /v1/jobs/run
+Authorization: Bearer ...
+Content-Type: application/json
+
+{
+  "schemaVersion": 1,
+  "clientId": "site-regression",
+  "steps": [
+    { "action": "goto", "url": "https://example.com" },
+    { "action": "setViewport", "width": 1280, "height": 720 },
+    { "action": "waitForSelector", "selector": "h1", "state": "visible" },
+    {
+      "action": "assert",
+      "kind": "text",
+      "selector": "h1",
+      "operator": "contains",
+      "expected": "Example"
+    },
+    { "action": "extract", "kind": "title", "as": "pageTitle" },
+    { "action": "screenshot", "as": "finalPage", "fullPage": true }
+  ]
+}
+```
+
+Sem `drivers` e `browsers`, o job roda em **todas as capacidades habilitadas**. Filtros são
+opcionais:
+
+```json
+{
+  "drivers": ["playwright", "selenium"],
+  "browsers": ["chromium", "firefox"]
+}
+```
+
+Quando os dois filtros são enviados, o serviço avalia o produto cartesiano solicitado. Combinações
+não suportadas ficam registradas como `unsupported`; as demais continuam executando. Cada execução
+tem status, duração, passos e outputs independentes. O resultado geral é `passed`, `failed` ou
+`partial`.
+
+O schema v1 oferece:
+
+- navegação: `goto`, `back`, `forward`, `reload`;
+- interação: `click`, `fill`, `type`, `press`, `hover`, `focus`, `check`, `uncheck`, `select`,
+  `scroll`;
+- sincronização: `wait`, `waitForSelector`, `waitForUrl`;
+- contexto: `setViewport`;
+- verificação e dados: `assert`, `extract`, `screenshot`.
+
+`extract` e `assert` aceitam `attribute`, `count`, `html`, `text`, `title`, `url`, `value` e
+`visible`. Screenshots retornam base64 no output indicado por `as`. O contrato não aceita `eval` nem
+JavaScript arbitrário.
+
+### Solicitar uma sessão nativa
 
 ```http
 POST /v1/leases
@@ -65,6 +107,7 @@ Content-Type: application/json
 {
   "clientId": "whatsapp-forms-office",
   "engine": "playwright",
+  "browser": "chromium",
   "waitTimeoutMs": 60000
 }
 ```
@@ -76,6 +119,7 @@ Resposta `201`:
   "leaseId": "9e3b...",
   "leaseToken": "secret...",
   "engine": "playwright",
+  "browser": "chromium",
   "expiresAt": "2026-07-26T15:00:00.000Z",
   "connection": {
     "protocol": "playwright",
@@ -83,75 +127,68 @@ Resposta `201`:
   },
   "versions": {
     "playwright": "1.61.1",
-    "puppeteer": "25.3.0"
+    "puppeteer": "25.3.0",
+    "selenium": "4.46.0"
   }
 }
 ```
 
 O endpoint e o token são segredos temporários e não devem aparecer em logs. Ao fechar a conexão, o
-processo do navegador é encerrado e a próxima solicitação FIFO recebe capacidade.
+processo é encerrado e a próxima solicitação FIFO recebe capacidade.
 
 Respostas relevantes:
 
+- `400`: contrato inválido;
 - `408`: espera na fila expirou;
-- `422`: engine não habilitado;
+- `422`: driver/navegador não habilitado;
 - `429`: sem capacidade imediata ou fila cheia;
 - `503`: serviço encerrando.
 
-### Playwright
+Para Playwright, cliente e servidor precisam usar o mesmo `major.minor`. No Puppeteer, use
+`puppeteer.connect({ browserWSEndpoint })`. No Selenium, use `new Builder().usingServer(endpoint)` e
+encerre com `driver.quit()`.
 
-```ts
-const lease = await requestLease("playwright");
-const browser = await chromium.connect(lease.connection.endpoint);
-```
+Puppeteer + Firefox usa uma única sessão WebDriver BiDi e, por isso, está disponível na facade de
+jobs, mas não como lease nativo reconectável. Uma solicitação nativa dessa combinação retorna `422`.
 
-Cliente e servidor Playwright precisam usar o mesmo `major.minor`. Os projetos auditados resolvem
-atualmente para `1.61.1`, por isso a versão está fixada sem `^`.
-
-### Puppeteer
-
-```ts
-const lease = await requestLease("puppeteer");
-const browser = await puppeteer.connect({
-  browserWSEndpoint: lease.connection.endpoint,
-});
-```
-
-O provider usa CDP e inicia um Chromium isolado por lease.
-
-### Selenium
-
-Ative o profile e configure a URL:
-
-```bash
-SELENIUM_REMOTE_URL=http://selenium-chromium:4444/wd/hub \
-docker compose --profile selenium up -d
-```
-
-O lease retorna `connection.protocol: "webdriver"` e o endpoint do Grid para
-`Builder().usingServer(endpoint)`. O cliente deve chamar `driver.quit()` e depois cancelar o lease.
-O Grid também encerra sessões abandonadas após o timeout configurado.
-
-### Encerrar explicitamente
+### Encerrar uma sessão nativa
 
 ```http
 DELETE /v1/leases/{leaseId}?token={leaseToken}
 Authorization: Bearer ...
 ```
 
-## Estado, Redis, PostgreSQL e Keycloak
+## Selenium Grid
 
-Nenhum deles é obrigatório na primeira implantação:
+Somente Chromium:
 
-- **Redis:** entra quando houver várias réplicas ou quando a facade assíncrona de jobs precisar de
-  fila distribuída, retries e backpressure. Ele não recupera um navegador que morreu.
-- **PostgreSQL:** entra para tenants, clientes, políticas, auditoria durável e histórico de jobs.
-  Leases e referências a processos continuam efêmeros.
-- **Keycloak:** entra quando houver múltiplos serviços/equipes, escopos por engine ou acesso fora da
-  rede privada. Internamente, uma API key rotacionável é menor e mais simples.
+```bash
+BROWSER_SELENIUM_REMOTE_URL=http://selenium-hub:4444/wd/hub
+SELENIUM_BROWSERS=chromium
+docker compose --profile selenium up -d
+```
 
-As fronteiras estão descritas em `docs/architecture.md`, evitando colocar regras de Redis,
-PostgreSQL ou Keycloak dentro do domínio.
+Chromium, Firefox e Edge:
+
+```bash
+BROWSER_SELENIUM_REMOTE_URL=http://selenium-hub:4444/wd/hub
+SELENIUM_BROWSERS=chromium,firefox,edge
+docker compose --profile selenium-all up -d
+```
+
+Essas variáveis devem estar no `.env` usado pelo serviço.
+
+## Redis, PostgreSQL e Keycloak
+
+Nenhum é obrigatório na implantação inicial:
+
+- **Redis:** entra para jobs assíncronos, várias réplicas, retries e backpressure. O Redis existente
+  do NSC Bot só deve ser compartilhado com prefixo, credencial e SLA isolados.
+- **PostgreSQL:** entra para tenants, políticas, auditoria durável e histórico de jobs.
+- **Keycloak:** entra quando houver múltiplos serviços/equipes, escopos por cliente ou acesso fora
+  da rede privada. Internamente, uma API key rotacionável é mais simples.
+
+Leases e referências a processos continuam efêmeros, mesmo com banco.
 
 ## Execução local
 
@@ -159,10 +196,14 @@ PostgreSQL ou Keycloak dentro do domínio.
 Copy-Item .env.example .env
 # substitua API_KEY por um segredo aleatório de pelo menos 32 caracteres
 npm.cmd ci
-npx.cmd playwright install chromium
+npx.cmd playwright install chromium firefox webkit
+# Puppeteer + Firefox requer o Firefox indicado em node_modules/puppeteer-core/src/revisions.ts.
+# Instale-o com @puppeteer/browsers e defina PUPPETEER_FIREFOX_EXECUTABLE_PATH.
 npm.cmd run check
 npm.cmd run dev
 ```
+
+A imagem Docker já instala e configura a revisão correta do Firefox para o Puppeteer.
 
 ## Docker e VPS
 
@@ -174,41 +215,27 @@ docker compose up -d
 docker compose ps
 ```
 
-A porta é publicada apenas em `127.0.0.1`. Containers consumidores entram na rede privada:
-
-```yaml
-services:
-  consumidor:
-    networks:
-      - default
-      - browser-automation
-    environment:
-      BROWSER_SERVICE_HTTP_URL: http://browser-automation-service:3000
-
-networks:
-  browser-automation:
-    external: true
-```
-
-Não publique os endpoints de automação na internet. O container principal roda como `pwuser`, sem
-capabilities, com `no-new-privileges`, init e `/dev/shm` dedicado. O limite inicial é dois
-navegadores/2 GB e deve ser ajustado após medir a VPS.
+A porta é publicada apenas em `127.0.0.1`. Containers consumidores entram na rede privada
+`browser-automation`. Não publique os endpoints na internet. O container principal roda como
+`pwuser`, sem capabilities, com `no-new-privileges`, init e `/dev/shm` dedicado.
 
 ## Operação
 
 - `GET /health/live`: processo HTTP vivo;
 - `GET /health/ready`: control plane pronto;
 - `GET /metrics`: métricas Prometheus protegidas pela chave;
-- logs estruturados sem registrar tokens;
+- logs estruturados sem tokens;
 - shutdown gracioso fecha leases e processos filhos.
+
+O endpoint de jobs é síncrono nesta versão. Para matrizes demoradas, aumente o timeout do proxy ou
+evolua para a fila Redis descrita em [docs/architecture.md](docs/architecture.md).
 
 ## Ordem de migração
 
-1. Weslei Bassotto ou Dias/Kovaltchuk, porque usam E2E e têm menor risco operacional.
-2. Formulários do NSC Bot e Whats Forms, trocando apenas `chromium.launch()` por lease +
-   `connect()`.
-3. Selenium/Puppeteer quando surgir um consumidor real desses protocolos.
-4. A facade neutra somente após catalogar ações comuns reais.
+1. Validar Weslei Bassotto ou Dias/Kovaltchuk pela facade de jobs.
+2. Migrar testes simples para o JSON portável, mantendo testes específicos em sessão nativa.
+3. Ativar Selenium Grid conforme a necessidade real da VPS.
+4. Migrar NSC Bot e Whats Forms apenas nos fluxos efêmeros.
 
-O Chromium persistente do `whatsapp-web.js` permanece local: ele mantém perfil, autenticação e ciclo
-de vida longo. Binaural não faz parte desta iniciativa.
+O Chromium persistente do `whatsapp-web.js` permanece local, pois mantém perfil, autenticação e
+ciclo de vida longo. Binaural não faz parte desta iniciativa.
