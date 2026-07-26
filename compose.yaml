@@ -8,8 +8,8 @@ x-platform-environment: &platform-environment
   ALLOWED_HOSTS: ${ALLOWED_HOSTS:-}
   MAX_ACTIVE_JOBS_PER_CLIENT: ${MAX_ACTIVE_JOBS_PER_CLIENT:-10}
   ARTIFACT_RETENTION_HOURS: ${ARTIFACT_RETENTION_HOURS:-168}
-  BROWSER_SELENIUM_REMOTE_URL: http://selenium-hub:4444/wd/hub
-  SELENIUM_BROWSERS: chromium,firefox,edge
+  BROWSER_SELENIUM_REMOTE_URL: ${BROWSER_SELENIUM_REMOTE_URL:-}
+  SELENIUM_BROWSERS: ${SELENIUM_BROWSERS:-chromium}
 
 x-platform-service: &platform-service
   restart: unless-stopped
@@ -93,6 +93,8 @@ services:
     environment:
       <<: *platform-environment
       APP_ROLE: dispatcher
+    volumes:
+      - artifacts:/data/artifacts
 
   worker-playwright:
     <<: *platform-service
@@ -138,6 +140,8 @@ services:
       <<: *platform-environment
       APP_ROLE: worker
       WORKER_DRIVER: selenium
+      BROWSER_SELENIUM_REMOTE_URL: http://selenium-hub:4444/wd/hub
+      SELENIUM_BROWSERS: chromium,firefox,edge
       WORKER_CONCURRENCY: ${SELENIUM_CONCURRENCY:-3}
       WORKER_CAPACITY_UNITS: ${SELENIUM_CAPACITY_UNITS:-3}
     volumes:

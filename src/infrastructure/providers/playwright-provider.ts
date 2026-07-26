@@ -13,6 +13,7 @@ export class PlaywrightProvider implements AutomationProvider {
     const browserType =
       browser === "chromium" ? chromium : browser === "firefox" ? firefox : webkit;
     const server = await browserType.launchServer({
+      chromiumSandbox: false,
       headless: true,
       wsPath: `/browser/${leaseId}`,
     });

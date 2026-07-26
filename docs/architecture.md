@@ -4,163 +4,202 @@
 
 ```mermaid
 flowchart LR
-    C["Serviços consumidores"] --> API["Control plane HTTP"]
-    API --> AUTH["Autenticação"]
-    API --> JOB["Matrix job runner"]
-    API --> LM["Lease manager"]
-    JOB --> CONV["Conversor DSL v1"]
-    CONV --> PR["Provider registry"]
-    LM --> PR
-    PR --> PW["Playwright adapter"]
-    PR --> PP["Puppeteer adapter"]
-    PR --> SE["Selenium adapter"]
-    PW --> B1["Chromium / Firefox / WebKit"]
-    PP --> B2["Chromium / Firefox"]
-    SE --> GRID["Grid: Chromium / Firefox / Edge"]
-    JOB -. "escala futura" .-> REDIS["Redis"]
-    API -. "identidade futura" .-> KC["Keycloak"]
-    API -. "histórico futuro" .-> PG["PostgreSQL"]
+    C["Serviços consumidores"] --> API["API Fastify"]
+    API --> AUTH["API keys e escopos"]
+    API --> COMP["Compilador DSL v1"]
+    COMP --> PG[("PostgreSQL")]
+    PG --> OUT["Outbox transacional"]
+    DISP["Dispatcher"] --> OUT
+    DISP --> REDIS[("Redis / BullMQ")]
+    REDIS --> WP["Worker Playwright"]
+    REDIS --> WPP["Worker Puppeteer"]
+    REDIS --> WS["Worker Selenium"]
+    WP --> B1["Chromium / Firefox / WebKit"]
+    WPP --> B2["Chromium / Firefox"]
+    WS --> GRID["Grid: Chromium / Firefox / Edge"]
+    WP --> ART["Artifact store"]
+    WPP --> ART
+    WS --> ART
+    API --> ART
+    API -. "futuro" .-> KC["Keycloak"]
+    API -. "OTLP" .-> OBS["Collector"]
 ```
 
-O domínio conhece drivers, navegadores, jobs, leases e capacidade. Ele não conhece Fastify, Docker,
-Keycloak, Redis nem PostgreSQL.
+O sistema é dividido em três papéis de processo:
 
-## Dois contratos
+- `api`: autentica, valida, compila, persiste e consulta;
+- `dispatcher`: publica a outbox e remove artefatos expirados;
+- `worker`: consome uma fila de driver, cria a sessão nativa e executa a DSL.
 
-### Facade portável
+Todos usam o mesmo artefato TypeScript, selecionado por `APP_ROLE`. Workers são separados por driver
+para permitir imagens, concorrência e escalabilidade diferentes.
 
-O cliente envia um job declarativo, versionado e sem código executável. O matrix runner resolve os
-alvos e cada session connector traduz as ações para a API nativa:
+## Contrato e compilador
+
+O TypeBox é a fonte única do contrato HTTP e dos tipos TypeScript:
 
 ```text
-JSON DSL v1 -> runner comum -> session port -> Playwright | Puppeteer | Selenium
+AutomationJobSchema -> JobCompiler -> ExecutionPlan[] -> ExecutionRecord[]
 ```
 
-Sem filtros, o runner usa todas as capacidades anunciadas pelos providers. Com somente um filtro,
-expande o outro eixo pelas capacidades disponíveis. Com `drivers` e `browsers`, avalia o produto
-cartesiano solicitado e marca combinações impossíveis como `unsupported`.
+Regras da expansão:
 
-Falhar em uma combinação não cancela as outras. A concorrência da matriz é limitada por
-`MAX_JOB_PARALLELISM`, enquanto `MAX_CONCURRENT_BROWSERS` continua sendo o limite global de sessões.
+1. sem filtros: todas as capacidades anunciadas;
+2. somente `drivers`: todos os navegadores disponíveis nesses drivers;
+3. somente `browsers`: os navegadores solicitados em todos os drivers disponíveis;
+4. ambos: produto cartesiano solicitado;
+5. combinação inexistente: execução terminal `unsupported`.
 
-### Sessão nativa
+Cada adapter implementa a mesma porta `AutomationSession`. Não existe conversão textual
+Playwright→Selenium; existe uma representação intermediária tipada, executada semanticamente por
+cada adapter. Isso evita traduzir código arbitrário e mantém comportamento verificável.
 
-O cliente escolhe `engine` e `browser`, aguarda capacidade, recebe um descritor de conexão e usa a
-biblioteca original. Esse modo preserva funcionalidades sem equivalente comum, como tracing,
-interceptação de rede, contexts avançados e APIs específicas.
+## Persistência e entrega
 
-O descritor separa `engine`, `browser` e `protocol`, permitindo adicionar WebDriver BiDi ou um
-provider gerenciado sem alterar o lifecycle de leases.
+O PostgreSQL é a fonte de verdade:
 
-## Matriz de capacidades
+- `browser_jobs`: definição, cliente, idempotência e estado agregado;
+- `browser_executions`: uma linha por driver/navegador;
+- `browser_outbox`: mensagens criadas na mesma transação do job;
+- `browser_artifacts`: metadados e caminho do conteúdo;
+- `browser_api_clients`: hash, escopos e ativação.
 
-| Driver     | Chromium | Firefox | WebKit | Edge    |
-| ---------- | -------- | ------- | ------ | ------- |
-| Playwright | sim      | sim     | sim    | não     |
-| Puppeteer  | sim      | sim     | não    | não     |
-| Selenium   | config.  | config. | não    | config. |
+O endpoint nunca publica diretamente no Redis. Job, execuções e outbox são gravados na mesma
+transação. O dispatcher usa `FOR UPDATE SKIP LOCKED`, publica no BullMQ e somente então marca a
+mensagem como entregue. Se Redis estiver indisponível, a mensagem é desbloqueada e tentada
+novamente.
 
-A matriz representa capacidades reais, não aliases. Edge não é tratado como Chromium e WebKit não é
-simulado em drivers que não o implementam.
+BullMQ possui uma fila por driver:
 
-## DSL v1
+```text
+browser-execution-playwright
+browser-execution-puppeteer
+browser-execution-selenium
+```
 
-O parser aceita de 1 a 100 passos, strings e dimensões limitadas, timeouts limitados a 120 segundos
-e somente URLs `http`, `https` ou `data`. Ações:
+O ID da execução é também o `jobId` do BullMQ, reduzindo duplicação acidental. O estado final sempre
+é persistido no PostgreSQL.
 
-- navegação: `goto`, `back`, `forward`, `reload`;
-- interação: `click`, `fill`, `type`, `press`, `hover`, `focus`, `check`, `uncheck`, `select`,
-  `scroll`;
-- sincronização: `wait`, `waitForSelector`, `waitForUrl`;
-- viewport: `setViewport`;
-- dados e testes: `extract`, `assert`, `screenshot`.
+## Execução
 
-Cada adapter implementa a mesma porta de sessão. Os resultados preservam duração e falha por passo,
-outputs nomeados e um status por combinação.
+O worker:
 
-O v1 não contém `eval`, scripts arbitrários, interceptação de rede, upload/download, cookies,
-contexts múltiplos, vídeos ou tracing. Esses recursos permanecem disponíveis no contrato nativo e só
-entram na DSL quando houver semântica equivalente e testável nos três drivers.
+1. valida se a execução ainda está `queued`;
+2. adquire unidades do semáforo local;
+3. marca `running` e incrementa a tentativa;
+4. abre provider e session connector;
+5. verifica cancelamento antes de cada passo;
+6. executa a DSL;
+7. persiste artefatos e outputs;
+8. fecha sessão/provider e libera capacidade.
 
-## Providers
+WebKit consome duas unidades, pois costuma exigir mais recursos na VPS. A concorrência BullMQ limita
+jobs simultâneos e o semáforo ponderado limita a pressão real sobre o container.
 
-### Playwright
+Falhas antes da sessão/passo são `infrastructure`; falhas do passo são `assertion`. Cancelamento é
+cooperativo e consultado antes de cada ação.
 
-Um processo isolado é criado por lease. Sessões nativas passam pelo relay autenticado; jobs usam o
-connector Playwright interno. Cliente e servidor nativos devem ter o mesmo `major.minor`.
+## Consistência e idempotência
 
-### Puppeteer
+A chave única `(client_id, idempotency_key)` garante idempotência mesmo com APIs concorrentes:
 
-Chromium reutiliza o executável instalado pelo Playwright. Firefox não pode reutilizar o build
-patchado do Playwright: a imagem instala a revisão estável fixada pelo Puppeteer e aponta
-`PUPPETEER_FIREFOX_EXECUTABLE_PATH` para ela. O protocolo nunca é apresentado como Playwright.
+- mesma chave e definição: retorna o job vencedor;
+- mesma chave e definição diferente: `409`;
+- quota ativa excedida: `429`.
 
-Firefox/WebDriver BiDi permite uma única sessão ativa. O job runner reutiliza internamente a sessão
-criada pelo provider; essa combinação não é oferecida como lease nativo reconectável.
+O agregado prioriza `running`, depois `queued`. Resultados mistos viram `partial`; combinações
+somente falhas/unsupported viram `failed`.
 
-### Selenium
+## Artefatos
 
-Selenium Grid é separado e já possui criação, fila e timeout de sessões WebDriver. O profile
-`selenium` cria hub + Chromium; `selenium-all` adiciona Firefox e Edge. `SELENIUM_BROWSERS`
-determina quais capacidades o control plane anuncia.
+O v2 usa filesystem compartilhado por volume:
 
-Em uma evolução com tenants não confiáveis, um gateway WebDriver/BiDi dedicado deverá esconder o
-Grid e correlacionar session IDs com leases.
+- worker escreve com criação exclusiva;
+- API lê pelo metadado persistido;
+- dispatcher remove conteúdo e linha expirada;
+- caminhos são resolvidos dentro da raiz e tentativas de escape são rejeitadas.
 
-## Estado e evolução
-
-### Uma VPS
-
-- uma réplica do control plane;
-- jobs síncronos e fila FIFO de leases em memória;
-- API key na rede Docker privada;
-- métricas Prometheus;
-- sem banco.
-
-### Múltiplos consumidores
-
-- Keycloak com OAuth2 client credentials;
-- escopos `jobs:run`, `leases:write` e `engines:read`;
-- PostgreSQL para tenants, políticas, auditoria e metadados;
-- segredo de sessão continua efêmero.
-
-### Escala horizontal e jobs assíncronos
-
-- Redis Streams ou BullMQ para jobs, retries e backpressure;
-- workers por driver;
-- scheduler por capacidade;
-- object storage para screenshots, downloads, vídeos e traces;
-- PostgreSQL guarda resultados duráveis, nunca processos de navegador.
-
-O Redis do NSC Bot só pode ser reaproveitado se SLA, versão e isolamento forem compatíveis. Use
-prefixo e credenciais dedicadas; a indisponibilidade do NSC não deve derrubar a plataforma.
+A porta `ArtifactStore` permite substituir o volume por S3/MinIO sem alterar compilador, runner ou
+API.
 
 ## Segurança
 
-- rede interna; nenhuma porta de driver exposta publicamente;
-- segredo principal nunca vai na URL;
-- token de lease aleatório, escopo único e expiração curta;
-- um processo de navegador por lease;
-- usuário Linux sem privilégios e limites de CPU/RAM;
-- allowlist de ações e limites de entrada na DSL;
-- URLs restritas a protocolos conhecidos;
-- logs não registram tokens;
-- perfis persistentes não entram no pool efêmero.
+- contrato fechado, sem `eval`;
+- limites de tamanho, quantidade e timeout;
+- somente `http`, `https` e `data` em `goto`;
+- resolução DNS e bloqueio IPv4/IPv6 privado, loopback, link-local, CGNAT e multicast;
+- `ALLOWED_HOSTS` explícito para exceções internas;
+- chaves armazenadas como SHA-256, nunca em texto puro;
+- escopos por rota;
+- Grid, Redis e PostgreSQL apenas na rede Docker;
+- API publicada em loopback;
+- containers sem capabilities e com `no-new-privileges`.
 
-A restrição de protocolo não é uma defesa SSRF completa. Antes de aceitar jobs de tenants não
-confiáveis, adicione política de destinos, bloqueio de IPs privados/metadados e resolução DNS
-validada.
+A política valida o DNS antes da execução, mas não elimina sozinha DNS rebinding. Para tenants não
+confiáveis expostos à internet, o próximo nível é um proxy de saída com regras de rede e resolução
+fixada.
 
-## Falhas esperadas
+## Autenticação e Keycloak
 
-| Falha                  | Comportamento                                               |
-| ---------------------- | ----------------------------------------------------------- |
-| combinação impossível  | execução `unsupported`; as demais continuam                 |
-| passo falha            | execução `failed` com resultados parciais                   |
-| fila cheia             | `429` no contrato nativo                                    |
-| espera expirada        | `408`; nenhuma sessão é criada                              |
-| navegador não inicia   | lease removido e capacidade liberada                        |
-| cliente não conecta    | lease expira após `LEASE_CONNECT_TIMEOUT_MS`                |
-| conexão cai            | processo encerrado e próximo item FIFO atendido             |
-| control plane reinicia | jobs síncronos/sessões caem; consumidor decide idempotência |
-| Redis cai no futuro    | jobs assíncronos param; sessões ativas não são migradas     |
+API key com escopos é suficiente para consumidores internos da mesma VPS e reduz dependências
+operacionais. `Authenticator` é uma porta da aplicação. Keycloak deve ser adicionado quando houver:
+
+- acesso externo;
+- múltiplos tenants/equipes;
+- rotação centralizada;
+- auditoria de identidade;
+- OAuth2 client credentials obrigatório.
+
+Nesse cenário, um adapter JWT/JWKS substitui o adapter PostgreSQL sem alterar handlers ou casos de
+uso.
+
+## Observabilidade
+
+Quando `OTEL_EXPORTER_OTLP_ENDPOINT` está definido:
+
+- traces: `/v1/traces`;
+- métricas: `/v1/metrics`;
+- atributos: job, execução, driver, navegador, status e duração.
+
+Health checks distinguem processo vivo de dependências prontas. O shutdown interrompe consumo, fecha
+servidor, filas, pool e telemetria.
+
+## Redis compartilhado
+
+Reutilizar o Redis do NSC Bot é tecnicamente possível, mas não é o padrão recomendado. Exige:
+
+- credencial própria;
+- database ou instância lógica isolada;
+- memória e eviction compatíveis com BullMQ;
+- persistência AOF;
+- SLA comum aceito;
+- monitoramento de latência e backlog.
+
+Sem essas garantias, use o Redis dedicado do Compose para que uma falha ou limpeza do NSC Bot não
+interrompa os jobs de navegador.
+
+## Limites deliberados da DSL v1
+
+Ficam fora até existir semântica equivalente nos três drivers:
+
+- JavaScript arbitrário;
+- interceptação de rede;
+- cookies e múltiplos contexts;
+- upload/download;
+- vídeo e tracing nativo;
+- perfis persistentes.
+
+Esses recursos devem entrar como ações portáteis versionadas ou como um serviço especializado, não
+como escapes específicos de driver dentro do mesmo job.
+
+## Testes
+
+O gate inclui todos os arquivos `src/**/*.ts`:
+
+- 100% statements;
+- 100% branches;
+- 100% functions;
+- 100% lines.
+
+Os adapters são testados contra doubles dos SDKs; a validação de release acrescenta PostgreSQL,
+Redis, containers e matriz real de navegadores.

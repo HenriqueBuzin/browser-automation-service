@@ -79,6 +79,9 @@ describe("SubmitJob and in-memory persistence", () => {
       executions: result.executions,
       job: result.job,
     });
+    await expect(repository.createJob(result.job, result.executions, [])).resolves.toMatchObject({
+      created: false,
+    });
   });
 
   it("replays equivalent idempotent submissions and rejects conflicting definitions", async () => {
@@ -119,10 +122,38 @@ describe("SubmitJob and in-memory persistence", () => {
     ).rejects.toBeInstanceOf(IdempotencyConflictError);
   });
 
+  it("uses a fallback reason for unsupported compiler plans", async () => {
+    const repository = new InMemoryJobRepository();
+    const submit = new SubmitJob(
+      {
+        compile: () => [
+          {
+            browser: "edge" as const,
+            driver: "selenium" as const,
+            supported: false,
+          },
+        ],
+      } as never,
+      new DestinationPolicy([], async () => [{ address: "8.8.8.8", family: 4 }]),
+      repository,
+      runtime(),
+    );
+    const result = await submit.execute(jobDefinition(), "unsupported-plan");
+    expect(result.executions[0]?.error?.message).toBe("Unsupported execution plan");
+  });
+
   it("covers repository artifact, outbox, state and retry operations", async () => {
     const repository = new InMemoryJobRepository();
     const job = jobRecord();
     const execution = executionRecord();
+    repository.executions.set(
+      "already-passed",
+      executionRecord({ id: "already-passed", status: "passed" }),
+    );
+    repository.executions.set(
+      "other-job",
+      executionRecord({ id: "other-job", jobId: "different-job" }),
+    );
     await repository.createJob(
       job,
       [execution],
@@ -170,6 +201,15 @@ describe("SubmitJob and in-memory persistence", () => {
     expect(await repository.cancelJob(job.id, fixedNow)).toBe(true);
     expect(await repository.cancelJob(job.id, fixedNow)).toBe(false);
     expect(await repository.cancelJob("missing", fixedNow)).toBe(false);
+
+    const orphan = executionRecord({ id: "orphan", jobId: "absent-job" });
+    repository.executions.set(orphan.id, orphan);
+    await repository.updateExecution(orphan.id, "passed", { updatedAt: fixedNow });
+
+    const vanished = new InMemoryJobRepository();
+    await vanished.createJob(jobRecord(), [], []);
+    vanished.jobs.clear();
+    expect(() => vanished.createJob(jobRecord(), [], [])).toThrow("disappeared");
   });
 });
 
@@ -253,10 +293,19 @@ describe("dispatcher, job service, janitor and capacity", () => {
       path: "execution/old.png",
       size: 1,
     });
+    await repository.addArtifact({
+      contentType: "image/png",
+      createdAt: new Date(fixedNow.getTime() - 20_000),
+      executionId: "execution",
+      id: "older",
+      name: "older",
+      path: "execution/older.png",
+      size: 1,
+    });
     const janitor = new ArtifactJanitor(repository, store, 5_000, () => fixedNow, 60_000);
-    expect(await janitor.run()).toBe(1);
+    expect(await janitor.run()).toBe(2);
     expect(await janitor.run()).toBe(0);
-    expect(store.remove).toHaveBeenCalledOnce();
+    expect(store.remove).toHaveBeenCalledTimes(2);
     expect(await repository.findArtifact("old")).toBeUndefined();
   });
 
@@ -275,6 +324,19 @@ describe("dispatcher, job service, janitor and capacity", () => {
     expect(dispatcher.dispatch).toHaveBeenCalledOnce();
     expect(maintenance).toHaveBeenCalledOnce();
     vi.useRealTimers();
+  });
+
+  it("supports default maintenance and an abort before the interval wait", async () => {
+    const controller = new AbortController();
+    const dispatcher = {
+      dispatch: vi.fn(async () => {
+        controller.abort();
+        return { failed: 0, published: 0 };
+      }),
+    };
+    const host = new DispatcherHost(dispatcher as never, 100);
+    await host.run(controller.signal);
+    expect(host.running).toBe(false);
   });
 
   it("enforces weighted FIFO capacity and idempotent releases", async () => {

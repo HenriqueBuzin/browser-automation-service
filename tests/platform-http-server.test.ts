@@ -158,6 +158,20 @@ describe("platform HTTP API", () => {
     expect(response.json().error).toBe(error.message);
   });
 
+  it("allows unexpected handler failures to reach Fastify's 500 response", async () => {
+    const submitJob = {
+      execute: vi.fn(async () => Promise.reject(new Error("unexpected"))),
+    };
+    const { server } = await build({ submitJob });
+    const response = await server.inject({
+      headers: { ...auth, "idempotency-key": "idempotency-1" },
+      method: "POST",
+      payload: jobDefinition(),
+      url: "/v2/jobs",
+    });
+    expect(response.statusCode).toBe(500);
+  });
+
   it("returns job snapshots, SSE events, cancellation and retry outcomes", async () => {
     const { deps, server } = await build();
     expect(

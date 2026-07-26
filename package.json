@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "description": "Durable asynchronous cross-browser automation platform.",
+  "packageManager": "npm@11.16.0",
   "engines": {
     "node": ">=24.18.0 <25",
     "npm": ">=11.16.0"
@@ -58,5 +59,10 @@
     "typescript": "6.0.3",
     "typescript-eslint": "8.65.0",
     "vitest": "4.1.10"
+  },
+  "allowScripts": {
+    "esbuild@0.28.1": true,
+    "msgpackr-extract@3.0.4": true,
+    "protobufjs@7.6.5": true
   }
 }

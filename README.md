@@ -1,61 +1,79 @@
 # Browser Automation Service
 
-Serviço compartilhado de automação de navegadores para a VPS. Um control plane comum cuida de
-autenticação, leases, fila, limites e métricas. Há dois contratos:
+Plataforma assíncrona e durável de automação de navegadores para serviços hospedados na VPS. Cada
+consumidor envia uma única DSL declarativa; o serviço compila o job para a matriz real de
+Playwright, Puppeteer e Selenium sem exigir alterações no código do consumidor.
 
-- **jobs portáveis:** um JSON declarativo é convertido para Playwright, Puppeteer ou Selenium e pode
-  ser executado em toda a matriz suportada;
-- **sessões nativas:** o consumidor escolhe driver e navegador e continua usando a biblioteca
-  original por WebSocket/CDP/WebDriver.
+Quando `drivers` e `browsers` não são informados, o job é executado em todas as combinações
+habilitadas. Quando são informados, funcionam como filtros. Combinações fisicamente impossíveis,
+como Puppeteer com WebKit, são registradas como `unsupported` em vez de serem simuladas.
 
-| Driver     | Protocolo nativo            | Navegadores da facade                     |
-| ---------- | --------------------------- | ----------------------------------------- |
-| Playwright | Playwright WebSocket        | Chromium, Firefox e WebKit                |
-| Puppeteer  | Chrome DevTools / BiDi      | Chromium e Firefox                        |
-| Selenium   | WebDriver via Selenium Grid | configurável: Chromium, Firefox e/ou Edge |
+## Matriz
 
-Combinações fisicamente inexistentes, como Puppeteer + WebKit, aparecem como `unsupported`; o
-serviço nunca finge ter executado uma combinação.
+| Driver     | Chromium | Firefox  | WebKit | Edge     |
+| ---------- | -------- | -------- | ------ | -------- |
+| Playwright | sim      | sim      | sim    | não      |
+| Puppeteer  | sim      | sim      | não    | não      |
+| Selenium   | opcional | opcional | não    | opcional |
+
+A instalação padrão executa cinco combinações Playwright/Puppeteer. O profile `selenium-all`
+adiciona Chromium, Firefox e Edge, totalizando oito.
+
+## Arquitetura
+
+- Node.js 24 LTS e TypeScript estrito;
+- Fastify e TypeBox como contrato HTTP/OpenAPI;
+- PostgreSQL como fonte de verdade de jobs, execuções, idempotência, clientes e artefatos;
+- outbox transacional no PostgreSQL;
+- BullMQ sobre Redis para filas separadas por driver;
+- processos independentes para API, dispatcher e workers;
+- storage local de artefatos, substituível por object storage;
+- autenticação por API key com SHA-256 e escopos armazenados no PostgreSQL;
+- OpenTelemetry via OTLP HTTP;
+- bloqueio de SSRF para destinos privados, com allowlist explícita;
+- cobertura obrigatória de 100% em linhas, branches, statements e funções.
+
+O Redis do NSC Bot pode ser reaproveitado somente com credencial, database/prefixo e SLA isolados. O
+Compose fornece Redis próprio por padrão. Keycloak não foi colocado no caminho crítico da rede
+interna: a porta `Authenticator` permite adicioná-lo quando houver múltiplos tenants, acesso externo
+ou necessidade de OAuth2 client credentials.
 
 Veja [a arquitetura detalhada](docs/architecture.md).
 
-## Tecnologias
+## API v2
 
-- Node.js 24 e TypeScript estrito;
-- Fastify para HTTP e WebSocket;
-- Playwright, Puppeteer e Selenium WebDriver;
-- Selenium Grid opcional no Docker Compose;
-- fila FIFO em memória em uma única réplica;
-- Docker com processos, memória e CPU limitados.
+Os health checks são públicos. Os demais endpoints exigem `X-API-Key` ou
+`Authorization: Bearer <chave>`. O cliente bootstrap recebe todos os escopos na inicialização.
 
-## API
+| Método | Endpoint                    | Escopo              | Resultado                        |
+| ------ | --------------------------- | ------------------- | -------------------------------- |
+| GET    | `/health/live`              | público             | processo vivo                    |
+| GET    | `/health/ready`             | público             | PostgreSQL e Redis prontos       |
+| GET    | `/v2/capabilities`          | `capabilities:read` | matriz habilitada                |
+| POST   | `/v2/jobs/plan`             | `jobs:write`        | plano sem executar               |
+| POST   | `/v2/jobs`                  | `jobs:write`        | cria job assíncrono              |
+| GET    | `/v2/jobs/{id}`             | `jobs:read`         | snapshot do job                  |
+| GET    | `/v2/jobs/{id}/events`      | `jobs:read`         | snapshot SSE                     |
+| POST   | `/v2/jobs/{id}/cancel`      | `jobs:write`        | cancelamento cooperativo         |
+| POST   | `/v2/executions/{id}/retry` | `jobs:write`        | retry de falha de infraestrutura |
+| GET    | `/v2/artifacts/{id}`        | `artifacts:read`    | conteúdo do artefato             |
+| GET    | `/docs`                     | configuração        | Swagger UI                       |
 
-Todos os endpoints, exceto health checks, exigem `Authorization: Bearer <API_KEY>` ou
-`X-API-Key: <API_KEY>`.
-
-### Descobrir capacidades
-
-```http
-GET /v1/engines
-Authorization: Bearer ...
-```
-
-A resposta informa os drivers habilitados e cada combinação `driver + browser` disponível.
-
-### Executar um job na matriz
+### Criar um job
 
 ```http
-POST /v1/jobs/run
-Authorization: Bearer ...
+POST /v2/jobs
+X-API-Key: <chave>
+Idempotency-Key: regression-home-2026-07-26
 Content-Type: application/json
 
 {
   "schemaVersion": 1,
-  "clientId": "site-regression",
+  "clientId": "weslei-bassotto",
   "steps": [
     { "action": "goto", "url": "https://example.com" },
     { "action": "setViewport", "width": 1280, "height": 720 },
-    { "action": "waitForSelector", "selector": "h1", "state": "visible" },
+    { "action": "waitForSelector", "selector": "h1" },
     {
       "action": "assert",
       "kind": "text",
@@ -69,8 +87,10 @@ Content-Type: application/json
 }
 ```
 
-Sem `drivers` e `browsers`, o job roda em **todas as capacidades habilitadas**. Filtros são
-opcionais:
+A resposta inicial é `202 Accepted`. Repetir a mesma definição com a mesma `Idempotency-Key` retorna
+o job existente com `200 OK`. Reutilizar a chave com outra definição retorna `409 Conflict`.
+
+Filtros opcionais:
 
 ```json
 {
@@ -79,163 +99,102 @@ opcionais:
 }
 ```
 
-Quando os dois filtros são enviados, o serviço avalia o produto cartesiano solicitado. Combinações
-não suportadas ficam registradas como `unsupported`; as demais continuam executando. Cada execução
-tem status, duração, passos e outputs independentes. O resultado geral é `passed`, `failed` ou
-`partial`.
+Com os dois filtros, o compilador avalia o produto cartesiano solicitado. Sem filtros, usa todas as
+capacidades anunciadas pelo deployment.
 
-O schema v1 oferece:
+### DSL v1
 
 - navegação: `goto`, `back`, `forward`, `reload`;
 - interação: `click`, `fill`, `type`, `press`, `hover`, `focus`, `check`, `uncheck`, `select`,
   `scroll`;
 - sincronização: `wait`, `waitForSelector`, `waitForUrl`;
 - contexto: `setViewport`;
-- verificação e dados: `assert`, `extract`, `screenshot`.
+- validação e dados: `assert`, `extract`, `screenshot`.
 
-`extract` e `assert` aceitam `attribute`, `count`, `html`, `text`, `title`, `url`, `value` e
-`visible`. Screenshots retornam base64 no output indicado por `as`. O contrato não aceita `eval` nem
-JavaScript arbitrário.
+Não há `eval` nem JavaScript arbitrário. A DSL aceita até 100 passos e limita seletores, strings,
+dimensões e timeouts. Screenshots são persistidos como artefatos e o output contém o ID, não base64.
 
-### Solicitar uma sessão nativa
+## Estados e falhas
 
-```http
-POST /v1/leases
-Authorization: Bearer ...
-Content-Type: application/json
+Jobs: `queued`, `running`, `passed`, `partial`, `failed` ou `canceled`.
 
-{
-  "clientId": "whatsapp-forms-office",
-  "engine": "playwright",
-  "browser": "chromium",
-  "waitTimeoutMs": 60000
-}
-```
+Execuções: `queued`, `running`, `passed`, `failed`, `unsupported`, `canceled` ou `timed_out`.
 
-Resposta `201`:
+Falhas são classificadas como `assertion`, `infrastructure`, `invalid_job` ou `timeout`. Apenas
+falhas de infraestrutura podem receber retry manual, limitado a três tentativas. Uma falha em uma
+combinação não cancela as demais.
 
-```json
-{
-  "leaseId": "9e3b...",
-  "leaseToken": "secret...",
-  "engine": "playwright",
-  "browser": "chromium",
-  "expiresAt": "2026-07-26T15:00:00.000Z",
-  "connection": {
-    "protocol": "playwright",
-    "endpoint": "ws://browser-automation-service:3000/v1/leases/9e3b.../connect?token=..."
-  },
-  "versions": {
-    "playwright": "1.61.1",
-    "puppeteer": "25.3.0",
-    "selenium": "4.46.0"
-  }
-}
-```
+## Desenvolvimento
 
-O endpoint e o token são segredos temporários e não devem aparecer em logs. Ao fechar a conexão, o
-processo é encerrado e a próxima solicitação FIFO recebe capacidade.
+Requisitos:
 
-Respostas relevantes:
-
-- `400`: contrato inválido;
-- `408`: espera na fila expirou;
-- `422`: driver/navegador não habilitado;
-- `429`: sem capacidade imediata ou fila cheia;
-- `503`: serviço encerrando.
-
-Para Playwright, cliente e servidor precisam usar o mesmo `major.minor`. No Puppeteer, use
-`puppeteer.connect({ browserWSEndpoint })`. No Selenium, use `new Builder().usingServer(endpoint)` e
-encerre com `driver.quit()`.
-
-Puppeteer + Firefox usa uma única sessão WebDriver BiDi e, por isso, está disponível na facade de
-jobs, mas não como lease nativo reconectável. Uma solicitação nativa dessa combinação retorna `422`.
-
-### Encerrar uma sessão nativa
-
-```http
-DELETE /v1/leases/{leaseId}?token={leaseToken}
-Authorization: Bearer ...
-```
-
-## Selenium Grid
-
-Somente Chromium:
-
-```bash
-BROWSER_SELENIUM_REMOTE_URL=http://selenium-hub:4444/wd/hub
-SELENIUM_BROWSERS=chromium
-docker compose --profile selenium up -d
-```
-
-Chromium, Firefox e Edge:
-
-```bash
-BROWSER_SELENIUM_REMOTE_URL=http://selenium-hub:4444/wd/hub
-SELENIUM_BROWSERS=chromium,firefox,edge
-docker compose --profile selenium-all up -d
-```
-
-Essas variáveis devem estar no `.env` usado pelo serviço.
-
-## Redis, PostgreSQL e Keycloak
-
-Nenhum é obrigatório na implantação inicial:
-
-- **Redis:** entra para jobs assíncronos, várias réplicas, retries e backpressure. O Redis existente
-  do NSC Bot só deve ser compartilhado com prefixo, credencial e SLA isolados.
-- **PostgreSQL:** entra para tenants, políticas, auditoria durável e histórico de jobs.
-- **Keycloak:** entra quando houver múltiplos serviços/equipes, escopos por cliente ou acesso fora
-  da rede privada. Internamente, uma API key rotacionável é mais simples.
-
-Leases e referências a processos continuam efêmeros, mesmo com banco.
-
-## Execução local
+- Node.js `24.18.x`;
+- npm `11.16.x`;
+- Docker com Compose v2 para integração.
 
 ```powershell
-Copy-Item .env.example .env
-# substitua API_KEY por um segredo aleatório de pelo menos 32 caracteres
 npm.cmd ci
-npx.cmd playwright install chromium firefox webkit
-# Puppeteer + Firefox requer o Firefox indicado em node_modules/puppeteer-core/src/revisions.ts.
-# Instale-o com @puppeteer/browsers e defina PUPPETEER_FIREFOX_EXECUTABLE_PATH.
 npm.cmd run check
-npm.cmd run dev
 ```
 
-A imagem Docker já instala e configura a revisão correta do Firefox para o Puppeteer.
+`npm run check` executa formatação, lint, TypeScript, 138 testes com cobertura estrita de 100%,
+build e auditoria de dependências.
 
-## Docker e VPS
+Para desenvolvimento sem containers, PostgreSQL e Redis precisam estar acessíveis e as variáveis de
+`APP_ROLE` devem ser configuradas. Os navegadores locais do Playwright podem ser instalados com:
+
+```powershell
+npx.cmd playwright install chromium firefox webkit
+```
+
+## Docker Compose
+
+Crie o arquivo de ambiente e substitua os três segredos:
 
 ```bash
 cp .env.example .env
-# edite .env e use: openssl rand -hex 32
-docker compose build
-docker compose up -d
+openssl rand -hex 32
+docker compose up -d --build
 docker compose ps
 ```
 
-A porta é publicada apenas em `127.0.0.1`. Containers consumidores entram na rede privada
-`browser-automation`. Não publique os endpoints na internet. O container principal roda como
-`pwuser`, sem capabilities, com `no-new-privileges`, init e `/dev/shm` dedicado.
+O deployment padrão inicia:
 
-## Operação
+- PostgreSQL;
+- Redis;
+- API;
+- dispatcher;
+- worker Playwright;
+- worker Puppeteer.
 
-- `GET /health/live`: processo HTTP vivo;
-- `GET /health/ready`: control plane pronto;
-- `GET /metrics`: métricas Prometheus protegidas pela chave;
-- logs estruturados sem tokens;
-- shutdown gracioso fecha leases e processos filhos.
+A API é publicada somente em `127.0.0.1`. Para habilitar Selenium:
 
-O endpoint de jobs é síncrono nesta versão. Para matrizes demoradas, aumente o timeout do proxy ou
-evolua para a fila Redis descrita em [docs/architecture.md](docs/architecture.md).
+```bash
+cat >> .env <<'EOF'
+BROWSER_SELENIUM_REMOTE_URL=http://selenium-hub:4444/wd/hub
+SELENIUM_BROWSERS=chromium,firefox,edge
+EOF
+docker compose --profile selenium-all up -d --build
+```
 
-## Ordem de migração
+Não configure `BROWSER_SELENIUM_REMOTE_URL` se o profile não estiver ativo; assim a API não anuncia
+combinações sem worker disponível.
 
-1. Validar Weslei Bassotto ou Dias/Kovaltchuk pela facade de jobs.
-2. Migrar testes simples para o JSON portável, mantendo testes específicos em sessão nativa.
-3. Ativar Selenium Grid conforme a necessidade real da VPS.
-4. Migrar NSC Bot e Whats Forms apenas nos fluxos efêmeros.
+## Segurança operacional
 
-O Chromium persistente do `whatsapp-web.js` permanece local, pois mantém perfil, autenticação e
-ciclo de vida longo. Binaural não faz parte desta iniciativa.
+- mantenha a API atrás do proxy da VPS e não publique Redis, PostgreSQL ou Selenium Grid;
+- use chaves aleatórias com pelo menos 32 caracteres;
+- preencha `ALLOWED_HOSTS` apenas para destinos privados deliberadamente acessíveis;
+- os containers removem capabilities e usam `no-new-privileges`;
+- navegadores são efêmeros e não recebem perfis persistentes;
+- `whatsapp-web.js` com sessão persistente deve continuar no serviço proprietário;
+- artefatos expiram por padrão após 168 horas;
+- use um collector OTLP ao definir `OTEL_EXPORTER_OTLP_ENDPOINT`.
+
+## Migração dos consumidores
+
+1. Use `/v2/jobs/plan` para verificar a matriz que será criada.
+2. Migre testes portáteis de Weslei Bassotto e Dias/Kovaltchuk.
+3. Migre fluxos efêmeros do NSC Bot e Whats Forms.
+4. Mantenha automações com perfil persistente fora do pool.
+5. Ative Selenium somente para jobs que realmente exigem Grid/Edge.

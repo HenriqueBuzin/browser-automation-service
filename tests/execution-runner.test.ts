@@ -144,6 +144,27 @@ describe("ExecutionRunner", () => {
     });
   });
 
+  it("tolerates close failures and acquires weighted WebKit capacity", async () => {
+    const sessionClose = vi.fn(async () => Promise.reject(new Error("close failed")));
+    const connected = setup({ session: fakeSession({ close: sessionClose }) });
+    await connected.runner.execute(connected.execution.id);
+    expect(sessionClose).toHaveBeenCalled();
+
+    const providerClose = vi.fn(async () => Promise.reject(new Error("provider close failed")));
+    const disconnected = setup();
+    disconnected.closeProvider.mockImplementation(providerClose);
+    disconnected.connector.connect.mockRejectedValue(new Error("connect failed"));
+    await disconnected.runner.execute(disconnected.execution.id);
+    expect(providerClose).toHaveBeenCalled();
+
+    const webkit = setup();
+    webkit.repository.executions.set(webkit.execution.id, executionRecord({ browser: "webkit" }));
+    await webkit.runner.execute(webkit.execution.id);
+    expect(await webkit.repository.findExecution(webkit.execution.id)).toMatchObject({
+      status: "failed",
+    });
+  });
+
   it("observes cancellation before a step and after the final step", async () => {
     const before = setup();
     const originalFind = before.repository.findExecution.bind(before.repository);

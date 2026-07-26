@@ -13,5 +13,6 @@ describe("SeleniumProvider", () => {
       protocol: "webdriver",
     });
     await expect(session.close()).resolves.toBeUndefined();
+    expect(session.onClose(() => undefined)).toBeUndefined();
   });
 });

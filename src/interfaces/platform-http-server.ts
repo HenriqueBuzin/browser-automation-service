@@ -30,7 +30,14 @@ export type PlatformServerDependencies = {
 export async function buildPlatformServer(
   dependencies: PlatformServerDependencies,
 ): Promise<FastifyInstance> {
-  const app = Fastify({ logger: false }).withTypeProvider<TypeBoxTypeProvider>();
+  const app = Fastify({
+    ajv: {
+      customOptions: {
+        removeAdditional: false,
+      },
+    },
+    logger: false,
+  }).withTypeProvider<TypeBoxTypeProvider>();
   await app.register(swagger, {
     openapi: {
       info: {

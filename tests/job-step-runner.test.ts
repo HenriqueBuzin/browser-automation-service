@@ -1,5 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
-import { JobStepRunner, StepExecutionError } from "../src/application/job-step-runner.js";
+import {
+  JobStepRunner,
+  serializeError,
+  StepExecutionError,
+} from "../src/application/job-step-runner.js";
 import type { AutomationStep } from "../src/domain/automation-job.js";
 import { fakeSession } from "./helpers/fake-session.js";
 
@@ -50,6 +54,33 @@ describe("JobStepRunner", () => {
       },
     ]);
     expect(result.steps[0]?.output).toBe("Example title");
+  });
+
+  it("reports failed assertions and serializes non-Error failures", async () => {
+    await expect(
+      new JobStepRunner().run(fakeSession(), [
+        { action: "assert", expected: "wrong", kind: "title" },
+      ]),
+    ).rejects.toThrow("Assertion failed");
+    expect(new StepExecutionError([], {}, "plain failure").message).toBe("plain failure");
+    expect(serializeError("plain failure")).toEqual({
+      message: "plain failure",
+      name: "Error",
+    });
+  });
+
+  it("uses explicit scroll axes and default optional action values", async () => {
+    const session = fakeSession();
+    await new JobStepRunner().run(session, [
+      { action: "scroll", x: 10 },
+      { action: "click", selector: "#button" },
+      { action: "screenshot", as: "screen" },
+    ]);
+    expect(session.scroll).toHaveBeenCalledWith(10, 0, undefined);
+    expect(session.click).toHaveBeenCalledWith("#button", {
+      button: "left",
+      clickCount: 1,
+    });
   });
 
   it("stops at the first failed step and preserves partial results", async () => {

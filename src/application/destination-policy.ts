@@ -26,9 +26,11 @@ export class DestinationPolicy {
   public async validate(job: AutomationJob): Promise<void> {
     const hosts = [
       ...new Set(
-        job.steps
-          .filter((step) => step.action === "goto" && !step.url.startsWith("data:"))
-          .map((step) => new URL(step.action === "goto" ? step.url : "").hostname),
+        job.steps.flatMap((step) =>
+          step.action === "goto" && !step.url.startsWith("data:")
+            ? [new URL(step.url).hostname]
+            : [],
+        ),
       ),
     ];
     for (const host of hosts) {

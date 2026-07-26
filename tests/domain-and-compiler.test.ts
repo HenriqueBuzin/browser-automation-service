@@ -126,6 +126,7 @@ describe("destination policy", () => {
     ["172.31.1.1", true],
     ["192.168.1.1", true],
     ["198.18.1.1", true],
+    ["198.20.1.1", false],
     ["224.0.0.1", true],
     ["::1", true],
     ["::", true],
@@ -176,5 +177,10 @@ describe("destination policy", () => {
         jobDefinition({ steps: [{ action: "goto", url: "https://private.test" }] }),
       ),
     ).rejects.toThrow("private.test");
+    await expect(
+      new DestinationPolicy([]).validate(
+        jobDefinition({ steps: [{ action: "goto", url: "http://localhost" }] }),
+      ),
+    ).rejects.toThrow("localhost");
   });
 });
