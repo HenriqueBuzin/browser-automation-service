@@ -1,6 +1,6 @@
 import type { ArtifactRecord } from "../domain/artifact.js";
 
-export type StoredArtifact = ArtifactRecord & { absolutePath: string };
+export type StoredArtifact = ArtifactRecord & { absolutePath?: string };
 
 export type ArtifactStore = {
   open: (artifact: ArtifactRecord) => Promise<Buffer>;

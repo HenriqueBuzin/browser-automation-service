@@ -13,6 +13,7 @@ import { DestinationNotAllowedError } from "../application/destination-policy.js
 import type { ArtifactStore } from "../ports/artifact-store.js";
 import type { JobRepository } from "../ports/job-repository.js";
 import type { ExecutionRecord } from "../domain/job-state.js";
+import { streamJobEvents } from "../application/job-event-stream.js";
 
 const IdParams = Type.Object({ id: Type.String({ format: "uuid" }) });
 
@@ -25,6 +26,9 @@ export type PlatformServerDependencies = {
   repository: JobRepository;
   submitJob: SubmitJob;
   swaggerEnabled: boolean;
+  eventHeartbeatMs?: number;
+  eventPollMs?: number;
+  logLevel?: string;
 };
 
 export async function buildPlatformServer(
@@ -36,7 +40,12 @@ export async function buildPlatformServer(
         removeAdditional: false,
       },
     },
-    logger: false,
+    logger: dependencies.logLevel
+      ? {
+          level: dependencies.logLevel,
+          redact: ["req.headers.authorization", "req.headers.x-api-key"],
+        }
+      : false,
   }).withTypeProvider<TypeBoxTypeProvider>();
   await app.register(swagger, {
     openapi: {
@@ -129,13 +138,31 @@ export async function buildPlatformServer(
       schema: { params: IdParams },
     },
     async (request, reply) => {
-      const result = await dependencies.jobService.get(request.params.id);
-      if (!result) return reply.code(404).send({ error: "Job not found" });
-      const payload = JSON.stringify(toJobResponse({ created: false, ...result }));
-      return reply
-        .type("text/event-stream")
-        .header("cache-control", "no-cache")
-        .send(`event: job\ndata: ${payload}\n\n`);
+      const initial = await dependencies.jobService.get(request.params.id);
+      if (!initial) return reply.code(404).send({ error: "Job not found" });
+      reply.hijack();
+      reply.raw.writeHead(200, {
+        "cache-control": "no-cache, no-transform",
+        connection: "keep-alive",
+        "content-type": "text/event-stream",
+      });
+      const controller = new AbortController();
+      request.raw.once("close", controller.abort.bind(controller));
+      await streamJobEvents({
+        heartbeatMs: dependencies.eventHeartbeatMs ?? 15_000,
+        ...(request.headers["last-event-id"]
+          ? { lastEventId: request.headers["last-event-id"] as string }
+          : {}),
+        load: async () => {
+          const result = await dependencies.jobService.get(request.params.id);
+          return result ? toJobResponse({ created: false, ...result }) : undefined;
+        },
+        pollMs: dependencies.eventPollMs ?? 1_000,
+        signal: controller.signal,
+        write: (chunk) => reply.raw.write(chunk),
+      });
+      reply.raw.end();
+      return reply;
     },
   );
 

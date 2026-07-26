@@ -57,6 +57,9 @@ vi.mock("../src/infrastructure/queue/bullmq-execution-queue.js", () => ({
 vi.mock("../src/infrastructure/artifacts/local-artifact-store.js", () => ({
   LocalArtifactStore: class {},
 }));
+vi.mock("../src/infrastructure/artifacts/s3-artifact-store.js", () => ({
+  S3ArtifactStore: class {},
+}));
 vi.mock("../src/infrastructure/auth/postgres-api-key-authenticator.js", () => ({
   ensureBootstrapClient: vi.fn(async () => undefined),
   PostgresApiKeyAuthenticator: class {},
@@ -176,6 +179,7 @@ import { startPlatform } from "../src/platform.js";
 
 function config(overrides: Partial<AppConfig> = {}): AppConfig {
   return {
+    artifactBackend: "local",
     allowedHosts: [],
     apiKey: "a".repeat(32),
     appRole: "api",
@@ -192,6 +196,10 @@ function config(overrides: Partial<AppConfig> = {}): AppConfig {
     redisUrl: "redis://queue",
     seleniumBrowsers: ["chromium"],
     seleniumRemoteUrl: undefined,
+    s3Bucket: "browser-artifacts",
+    s3Endpoint: undefined,
+    s3ForcePathStyle: false,
+    s3Region: "us-east-1",
     shutdownTimeoutMs: 1_000,
     swaggerEnabled: true,
     workerCapacityUnits: 2,
@@ -209,7 +217,14 @@ beforeEach(() => {
 
 describe("platform composition root", () => {
   it("starts, checks readiness and closes the API role", async () => {
-    const running = await startPlatform(config(), new AbortController().signal);
+    const running = await startPlatform(
+      config({
+        artifactBackend: "s3",
+        s3Endpoint: "http://object-store",
+        s3ForcePathStyle: true,
+      }),
+      new AbortController().signal,
+    );
     expect(mocks.server.listen).toHaveBeenCalledWith({ host: "127.0.0.1", port: 3_000 });
     const buildCalls = mocks.buildServer.mock.calls as unknown[][];
     const dependencies = buildCalls[0]?.[0] as { readiness: () => Promise<boolean> } | undefined;
@@ -220,6 +235,15 @@ describe("platform composition root", () => {
     expect(mocks.server.close).toHaveBeenCalled();
     expect(mocks.queue.close).toHaveBeenCalled();
     expect(mocks.pool.end).toHaveBeenCalled();
+  });
+
+  it("builds an S3 artifact store without a custom endpoint", async () => {
+    const running = await startPlatform(
+      config({ artifactBackend: "s3", s3Endpoint: undefined }),
+      new AbortController().signal,
+    );
+    await running.close();
+    expect(mocks.buildServer).toHaveBeenCalledOnce();
   });
 
   it("starts and closes the dispatcher role", async () => {

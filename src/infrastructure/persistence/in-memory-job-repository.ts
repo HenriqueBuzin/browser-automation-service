@@ -13,10 +13,15 @@ export class InMemoryJobRepository implements JobRepository {
   readonly executions = new Map<string, ExecutionRecord>();
   readonly jobs = new Map<string, JobRecord>();
   readonly outbox = new Map<string, OutboxMessage>();
+  readonly artifactDeletion = new Map<
+    string,
+    { attempts: number; retryAt?: Date; status: "active" | "deleting" | "retry" }
+  >();
   readonly #idempotency = new Map<string, string>();
 
   public addArtifact(artifact: ArtifactRecord): Promise<void> {
     this.artifacts.set(artifact.id, artifact);
+    this.artifactDeletion.set(artifact.id, { attempts: 0, status: "active" });
     return Promise.resolve();
   }
 
@@ -48,16 +53,69 @@ export class InMemoryJobRepository implements JobRepository {
     );
   }
 
+  public claimExpiredArtifacts(before: Date, limit: number, now: Date): Promise<ArtifactRecord[]> {
+    const claimed = [...this.artifacts.values()]
+      .filter((artifact) => {
+        const deletion = this.artifactDeletion.get(artifact.id);
+        return (
+          artifact.createdAt < before &&
+          (deletion?.status === "active" ||
+            (deletion?.status === "retry" && (!deletion.retryAt || deletion.retryAt <= now)))
+        );
+      })
+      .sort((left, right) => left.createdAt.getTime() - right.createdAt.getTime())
+      .slice(0, limit);
+    for (const artifact of claimed) {
+      const deletion = this.artifactDeletion.get(artifact.id);
+      this.artifactDeletion.set(artifact.id, {
+        attempts: deletion?.attempts ?? 0,
+        status: "deleting",
+      });
+    }
+    return Promise.resolve(claimed);
+  }
+
+  public claimExecution(
+    id: string,
+    driver: ExecutionRecord["driver"],
+    now: Date,
+  ): Promise<ExecutionRecord | undefined> {
+    const current = this.executions.get(id);
+    const job = current ? this.jobs.get(current.jobId) : undefined;
+    if (current?.driver !== driver || current.status !== "queued" || job?.status === "canceled") {
+      return Promise.resolve(undefined);
+    }
+    const claimed = {
+      ...current,
+      attempt: current.attempt + 1,
+      startedAt: now,
+      status: "running" as const,
+      updatedAt: now,
+    };
+    this.executions.set(id, claimed);
+    this.#aggregate(current.jobId, now);
+    return Promise.resolve(claimed);
+  }
+
   public createJob(
     job: JobRecord,
     executions: ExecutionRecord[],
     messages: OutboxMessage[],
+    maxActiveJobs = Number.MAX_SAFE_INTEGER,
   ): Promise<CreateJobResult> {
     const key = `${job.definition.clientId}:${job.idempotencyKey}`;
     const existingId = this.#idempotency.get(key);
     if (existingId) {
       const existing = this.#readJob(existingId);
       return Promise.resolve({ created: false, ...existing });
+    }
+    const active = [...this.jobs.values()].filter(
+      (candidate) =>
+        candidate.definition.clientId === job.definition.clientId &&
+        ["queued", "running"].includes(candidate.status),
+    ).length;
+    if (active >= maxActiveJobs) {
+      return Promise.resolve({ created: false, executions, job, quotaExceeded: true });
     }
     this.jobs.set(job.id, job);
     this.#idempotency.set(key, job.id);
@@ -88,15 +146,6 @@ export class InMemoryJobRepository implements JobRepository {
 
   public findExecution(id: string): Promise<ExecutionRecord | undefined> {
     return Promise.resolve(this.executions.get(id));
-  }
-
-  public findExpiredArtifacts(before: Date, limit: number): Promise<ArtifactRecord[]> {
-    return Promise.resolve(
-      [...this.artifacts.values()]
-        .filter((artifact) => artifact.createdAt < before)
-        .sort((left, right) => left.createdAt.getTime() - right.createdAt.getTime())
-        .slice(0, limit),
-    );
   }
 
   public findJob(
@@ -136,8 +185,21 @@ export class InMemoryJobRepository implements JobRepository {
     return Promise.resolve(true);
   }
 
-  public removeArtifact(id: string): Promise<void> {
+  public completeArtifactDeletion(id: string): Promise<void> {
     this.artifacts.delete(id);
+    this.artifactDeletion.delete(id);
+    return Promise.resolve();
+  }
+
+  public failArtifactDeletion(id: string, retryAt: Date): Promise<void> {
+    const deletion = this.artifactDeletion.get(id);
+    if (deletion) {
+      this.artifactDeletion.set(id, {
+        attempts: deletion.attempts + 1,
+        retryAt,
+        status: "retry",
+      });
+    }
     return Promise.resolve();
   }
 

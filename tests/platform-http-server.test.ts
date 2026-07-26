@@ -29,7 +29,14 @@ function dependencies() {
   };
   const jobService = {
     cancel: vi.fn(async (id: string) => id === jobId),
-    get: vi.fn(async (id: string) => (id === jobId ? { executions: [execution], job } : undefined)),
+    get: vi.fn(async (id: string) =>
+      id === jobId
+        ? {
+            executions: [{ ...execution, status: "passed" as const }],
+            job: { ...job, status: "passed" as const },
+          }
+        : undefined,
+    ),
     retry: vi.fn(async (id: string) => id === executionId),
   };
   const readiness = vi.fn(async () => true);
@@ -62,6 +69,9 @@ async function build(overrides: Record<string, unknown> = {}) {
     authenticator: deps.authenticator as never,
     compiler: deps.compiler as never,
     jobService: deps.jobService as never,
+    ...(typeof (deps as Record<string, unknown>).logLevel === "string"
+      ? { logLevel: (deps as Record<string, unknown>).logLevel as string }
+      : {}),
     readiness: deps.readiness as never,
     repository: deps.repository as never,
     submitJob: deps.submitJob as never,
@@ -90,6 +100,11 @@ describe("platform HTTP API", () => {
     });
     expect(capabilities.statusCode).toBe(200);
     expect(capabilities.json().capabilities).toHaveLength(1);
+  });
+
+  it("enables structured request logging when configured", async () => {
+    const { server } = await build({ logLevel: "silent" });
+    expect((await server.inject({ method: "GET", url: "/health/live" })).statusCode).toBe(200);
   });
 
   it("plans and submits asynchronous jobs with both success status codes", async () => {
@@ -188,6 +203,27 @@ describe("platform HTTP API", () => {
     });
     expect(events.headers["content-type"]).toContain("text/event-stream");
     expect(events.body).toContain("event: job");
+    const resumed = await server.inject({
+      headers: { ...auth, "last-event-id": fixedNow.toISOString() },
+      method: "GET",
+      url: `/v2/jobs/${jobId}/events`,
+    });
+    expect(resumed.statusCode).toBe(200);
+    deps.jobService.get
+      .mockResolvedValueOnce({
+        executions: [executionRecord({ status: "passed" })] as never,
+        job: jobRecord({ status: "passed" }) as never,
+      })
+      .mockResolvedValueOnce(undefined);
+    expect(
+      (
+        await server.inject({
+          headers: auth,
+          method: "GET",
+          url: `/v2/jobs/${jobId}/events`,
+        })
+      ).statusCode,
+    ).toBe(200);
     expect(
       (
         await server.inject({

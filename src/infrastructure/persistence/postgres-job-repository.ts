@@ -14,6 +14,7 @@ type JobRow = QueryResultRow & {
   client_id: string;
   created_at: Date;
   definition: AutomationJob;
+  definition_hash: string;
   id: string;
   idempotency_key: string;
   status: JobRecord["status"];
@@ -126,23 +127,106 @@ export class PostgresJobRepository implements JobRepository {
     return result.rows.map(mapOutbox);
   }
 
+  public async claimExpiredArtifacts(
+    before: Date,
+    limit: number,
+    now: Date,
+  ): Promise<ArtifactRecord[]> {
+    const result = await this.pool.query<ArtifactRow>(
+      `WITH candidates AS (
+         SELECT id FROM browser_artifacts
+         WHERE created_at < $1
+           AND (deletion_status = 'active'
+             OR (deletion_status = 'retry' AND delete_after <= $3))
+         ORDER BY created_at FOR UPDATE SKIP LOCKED LIMIT $2
+       )
+       UPDATE browser_artifacts AS artifact
+       SET deletion_status = 'deleting', delete_after = NULL
+       FROM candidates WHERE artifact.id = candidates.id
+       RETURNING artifact.*`,
+      [before, limit, now],
+    );
+    return result.rows.map(mapArtifact);
+  }
+
+  public async claimExecution(
+    id: string,
+    driver: ExecutionRecord["driver"],
+    now: Date,
+  ): Promise<ExecutionRecord | undefined> {
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      const result = await client.query<ExecutionRow>(
+        `UPDATE browser_executions AS execution
+         SET status = 'running', attempt = execution.attempt + 1,
+             started_at = $3, updated_at = $3
+         FROM browser_jobs AS job
+         WHERE execution.id = $1 AND execution.driver = $2
+           AND execution.status = 'queued' AND job.id = execution.job_id
+           AND job.status <> 'canceled'
+         RETURNING execution.*`,
+        [id, driver, now],
+      );
+      const row = result.rows[0];
+      if (row) await updateAggregate(client, row.job_id, now);
+      await client.query("COMMIT");
+      return row ? mapExecution(row) : undefined;
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
   public async createJob(
     job: JobRecord,
     executions: ExecutionRecord[],
     messages: OutboxMessage[],
+    maxActiveJobs = Number.MAX_SAFE_INTEGER,
   ): Promise<CreateJobResult> {
     const client = await this.pool.connect();
     try {
       await client.query("BEGIN");
+      await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [
+        job.definition.clientId,
+      ]);
+      const existingJob = await client.query<JobRow>(
+        "SELECT * FROM browser_jobs WHERE client_id = $1 AND idempotency_key = $2",
+        [job.definition.clientId, job.idempotencyKey],
+      );
+      if (existingJob.rows[0]) {
+        const existingExecutions = await client.query<ExecutionRow>(
+          "SELECT * FROM browser_executions WHERE job_id = $1 ORDER BY created_at, id",
+          [existingJob.rows[0].id],
+        );
+        await client.query("COMMIT");
+        return {
+          created: false,
+          executions: existingExecutions.rows.map(mapExecution),
+          job: mapJob(existingJob.rows[0]),
+        };
+      }
+      const active = await client.query<{ count: string }>(
+        `SELECT count(*)::text AS count FROM browser_jobs
+         WHERE client_id = $1 AND status IN ('queued', 'running')`,
+        [job.definition.clientId],
+      );
+      if (Number(active.rows[0]?.count ?? 0) >= maxActiveJobs) {
+        await client.query("COMMIT");
+        return { created: false, executions, job, quotaExceeded: true };
+      }
       await client.query(
         `INSERT INTO browser_jobs
-         (id, client_id, idempotency_key, definition, status, created_at, updated_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+         (id, client_id, idempotency_key, definition, definition_hash, status, created_at, updated_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
         [
           job.id,
           job.definition.clientId,
           job.idempotencyKey,
           job.definition,
+          job.definitionHash,
           job.status,
           job.createdAt,
           job.updatedAt,
@@ -166,8 +250,7 @@ export class PostgresJobRepository implements JobRepository {
 
   public async countActiveJobs(clientId: string): Promise<number> {
     const result = await this.pool.query<{ count: string }>(
-      `SELECT count(*)::text AS count
-       FROM browser_jobs
+      `SELECT count(*)::text AS count FROM browser_jobs
        WHERE client_id = $1 AND status IN ('queued', 'running')`,
       [clientId],
     );
@@ -176,7 +259,7 @@ export class PostgresJobRepository implements JobRepository {
 
   public async findArtifact(id: string): Promise<ArtifactRecord | undefined> {
     const result = await this.pool.query<ArtifactRow>(
-      "SELECT * FROM browser_artifacts WHERE id = $1",
+      "SELECT * FROM browser_artifacts WHERE id = $1 AND deletion_status = 'active'",
       [id],
     );
     return result.rows[0] ? mapArtifact(result.rows[0]) : undefined;
@@ -199,17 +282,6 @@ export class PostgresJobRepository implements JobRepository {
       [id],
     );
     return result.rows[0] ? mapExecution(result.rows[0]) : undefined;
-  }
-
-  public async findExpiredArtifacts(before: Date, limit: number): Promise<ArtifactRecord[]> {
-    const result = await this.pool.query<ArtifactRow>(
-      `SELECT * FROM browser_artifacts
-       WHERE created_at < $1
-       ORDER BY created_at
-       LIMIT $2`,
-      [before, limit],
-    );
-    return result.rows.map(mapArtifact);
   }
 
   public async findJob(
@@ -276,8 +348,21 @@ export class PostgresJobRepository implements JobRepository {
     }
   }
 
-  public async removeArtifact(id: string): Promise<void> {
-    await this.pool.query("DELETE FROM browser_artifacts WHERE id = $1", [id]);
+  public async completeArtifactDeletion(id: string): Promise<void> {
+    await this.pool.query(
+      "DELETE FROM browser_artifacts WHERE id = $1 AND deletion_status = 'deleting'",
+      [id],
+    );
+  }
+
+  public async failArtifactDeletion(id: string, retryAt: Date): Promise<void> {
+    await this.pool.query(
+      `UPDATE browser_artifacts
+       SET deletion_status = 'retry', deletion_attempts = deletion_attempts + 1,
+           delete_after = $2
+       WHERE id = $1 AND deletion_status = 'deleting'`,
+      [id, retryAt],
+    );
   }
 
   public async updateExecution(
@@ -374,6 +459,7 @@ function mapJob(row: JobRow): JobRecord {
   return {
     createdAt: row.created_at,
     definition: row.definition,
+    definitionHash: row.definition_hash,
     id: row.id,
     idempotencyKey: row.idempotency_key,
     status: row.status,

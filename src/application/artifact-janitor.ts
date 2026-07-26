@@ -19,10 +19,14 @@ export class ArtifactJanitor {
     }
     this.#lastRunAt = now.getTime();
     const before = new Date(now.getTime() - this.retentionMs);
-    const expired = await this.repository.findExpiredArtifacts(before, limit);
+    const expired = await this.repository.claimExpiredArtifacts(before, limit, now);
     for (const artifact of expired) {
-      await this.store.remove(artifact);
-      await this.repository.removeArtifact(artifact.id);
+      try {
+        await this.store.remove(artifact);
+        await this.repository.completeArtifactDeletion(artifact.id);
+      } catch {
+        await this.repository.failArtifactDeletion(artifact.id, new Date(now.getTime() + 60_000));
+      }
     }
     return expired.length;
   }

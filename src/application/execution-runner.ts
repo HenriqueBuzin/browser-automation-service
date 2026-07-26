@@ -9,6 +9,7 @@ import type { RuntimeValues } from "./submit-job.js";
 import type { ProviderSession } from "../domain/automation-provider.js";
 import type { WeightedSemaphore } from "./weighted-semaphore.js";
 import { PlatformObservability } from "./observability.js";
+import { silentLogger, type PlatformLogger } from "./platform-logger.js";
 
 export class CanceledExecutionError extends Error {
   public constructor() {
@@ -29,26 +30,33 @@ export class ExecutionRunner {
     private readonly runtime: RuntimeValues,
     private readonly resources: WeightedSemaphore,
     private readonly observability = new PlatformObservability(),
+    private readonly logger: PlatformLogger = silentLogger,
   ) {}
 
   public async execute(executionId: string): Promise<void> {
-    const execution = await this.repository.findExecution(executionId);
-    if (execution?.driver !== this.driver || execution.status !== "queued") return;
+    const pending = await this.repository.findExecution(executionId);
+    if (pending?.driver !== this.driver || pending.status !== "queued") return;
+    const releaseCapacity = await this.resources.acquire(pending.browser === "webkit" ? 2 : 1);
+    const startedAt = this.runtime.now();
+    const execution = await this.repository.claimExecution(executionId, this.driver, startedAt);
+    if (!execution) {
+      releaseCapacity();
+      return;
+    }
     const aggregate = await this.repository.findJob(execution.jobId);
-    if (aggregate?.job.status === "canceled" || !aggregate) return;
-
-    const releaseCapacity = await this.resources.acquire(execution.browser === "webkit" ? 2 : 1);
+    if (!aggregate) {
+      releaseCapacity();
+      return;
+    }
     const startedMonotonic = performance.now();
     const observation = this.observability.startExecution(execution);
+    this.logger.info(
+      { browser: execution.browser, driver: execution.driver, executionId },
+      "execution started",
+    );
     let session: AutomationSession | undefined;
     let providerSession: ProviderSession | undefined;
     try {
-      const startedAt = this.runtime.now();
-      await this.repository.updateExecution(execution.id, "running", {
-        attempt: execution.attempt + 1,
-        startedAt,
-        updatedAt: startedAt,
-      });
       providerSession = await this.providers
         .getForBrowser(execution.driver, execution.browser)
         .launch(execution.id, execution.browser);
@@ -83,6 +91,7 @@ export class ExecutionRunner {
         updatedAt: finishedAt,
       });
       observation.finish(finalStatus, performance.now() - startedMonotonic);
+      this.logger.info({ executionId, status: finalStatus }, "execution finished");
     } catch (error) {
       const finishedAt = this.runtime.now();
       const category =
@@ -113,6 +122,7 @@ export class ExecutionRunner {
         performance.now() - startedMonotonic,
         error,
       );
+      this.logger.error({ error, executionId }, "execution failed");
     } finally {
       if (session) await session.close().catch(() => undefined);
       else if (providerSession) await providerSession.close().catch(() => undefined);

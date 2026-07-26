@@ -30,6 +30,7 @@ export type FailureCategory = "assertion" | "infrastructure" | "invalid_job" | "
 export type JobRecord = {
   createdAt: Date;
   definition: AutomationJob;
+  definitionHash: string;
   id: string;
   idempotencyKey: string;
   status: JobStatus;

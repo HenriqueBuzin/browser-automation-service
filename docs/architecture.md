@@ -6,7 +6,7 @@
 flowchart LR
     C["Serviços consumidores"] --> API["API Fastify"]
     API --> AUTH["API keys e escopos"]
-    API --> COMP["Compilador DSL v1"]
+    API --> COMP["Compilador Automation Plan v1"]
     COMP --> PG[("PostgreSQL")]
     PG --> OUT["Outbox transacional"]
     DISP["Dispatcher"] --> OUT
@@ -29,7 +29,7 @@ O sistema é dividido em três papéis de processo:
 
 - `api`: autentica, valida, compila, persiste e consulta;
 - `dispatcher`: publica a outbox e remove artefatos expirados;
-- `worker`: consome uma fila de driver, cria a sessão nativa e executa a DSL.
+- `worker`: consome uma fila de driver, faz claim atômico, cria a sessão nativa e executa o plano.
 
 Todos usam o mesmo artefato TypeScript, selecionado por `APP_ROLE`. Workers são separados por driver
 para permitir imagens, concorrência e escalabilidade diferentes.
@@ -50,9 +50,10 @@ Regras da expansão:
 4. ambos: produto cartesiano solicitado;
 5. combinação inexistente: execução terminal `unsupported`.
 
-Cada adapter implementa a mesma porta `AutomationSession`. Não existe conversão textual
-Playwright→Selenium; existe uma representação intermediária tipada, executada semanticamente por
-cada adapter. Isso evita traduzir código arbitrário e mantém comportamento verificável.
+Cada adapter implementa a mesma porta `AutomationSession`. O plano é uma representação intermediária
+declarativa e fechada. Não existe conversão textual Playwright→Selenium; existe uma representação
+intermediária tipada, executada semanticamente por cada adapter. Isso evita traduzir código
+arbitrário e mantém comportamento verificável.
 
 ## Persistência e entrega
 
@@ -101,7 +102,9 @@ cooperativo e consultado antes de cada ação.
 
 ## Consistência e idempotência
 
-A chave única `(client_id, idempotency_key)` garante idempotência mesmo com APIs concorrentes:
+A chave única `(client_id, idempotency_key)` e o fingerprint canônico garantem idempotência mesmo
+com APIs concorrentes. A criação usa advisory lock por cliente para aplicar a quota dentro da mesma
+transação:
 
 - mesma chave e definição: retorna o job vencedor;
 - mesma chave e definição diferente: `409`;
@@ -112,11 +115,13 @@ somente falhas/unsupported viram `failed`.
 
 ## Artefatos
 
-O v2 usa filesystem compartilhado por volume:
+O backend é selecionado por `ARTIFACT_BACKEND=local|s3`. O modo local usa filesystem compartilhado;
+o modo S3 aceita AWS S3 e implementações compatíveis:
 
 - worker escreve com criação exclusiva;
 - API lê pelo metadado persistido;
-- dispatcher remove conteúdo e linha expirada;
+- dispatcher faz claim exclusivo, marca `deleting`, remove conteúdo e conclui a linha;
+- falhas de remoção viram `retry`, sem perder o metadado;
 - caminhos são resolvidos dentro da raiz e tentativas de escape são rejeitadas.
 
 A porta `ArtifactStore` permite substituir o volume por S3/MinIO sem alterar compilador, runner ou
@@ -178,7 +183,7 @@ Reutilizar o Redis do NSC Bot é tecnicamente possível, mas não é o padrão r
 Sem essas garantias, use o Redis dedicado do Compose para que uma falha ou limpeza do NSC Bot não
 interrompa os jobs de navegador.
 
-## Limites deliberados da DSL v1
+## Limites deliberados do Automation Plan v1
 
 Ficam fora até existir semântica equivalente nos três drivers:
 

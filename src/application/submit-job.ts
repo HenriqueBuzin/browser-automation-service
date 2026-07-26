@@ -4,6 +4,7 @@ import type { JobRepository } from "../ports/job-repository.js";
 import type { JobCompiler } from "./job-compiler.js";
 import type { DestinationPolicy } from "./destination-policy.js";
 import { PlatformObservability } from "./observability.js";
+import { definitionFingerprint } from "./definition-fingerprint.js";
 
 export type RuntimeValues = {
   id: () => string;
@@ -25,19 +26,15 @@ export class SubmitJob {
     idempotencyKey: string,
   ): Promise<{ created: boolean; executions: ExecutionRecord[]; job: JobRecord }> {
     const existing = await this.repository.findByIdempotency(definition.clientId, idempotencyKey);
+    const definitionHash = definitionFingerprint(definition);
     if (existing) {
-      if (JSON.stringify(existing.job.definition) !== JSON.stringify(definition)) {
+      if (existing.job.definitionHash !== definitionHash) {
         throw new IdempotencyConflictError();
       }
       this.observability.jobSubmitted(false);
       return { created: false, ...existing };
     }
     await this.destinationPolicy.validate(definition);
-    if (
-      (await this.repository.countActiveJobs(definition.clientId)) >= this.maxActiveJobsPerClient
-    ) {
-      throw new ClientQuotaExceededError(definition.clientId);
-    }
     const now = this.runtime.now();
     const jobId = this.runtime.id();
     const executions = this.compiler.compile(definition).map((plan): ExecutionRecord => {
@@ -66,6 +63,7 @@ export class SubmitJob {
     const job: JobRecord = {
       createdAt: now,
       definition,
+      definitionHash,
       id: jobId,
       idempotencyKey,
       status: aggregateJobStatus(executions),
@@ -80,8 +78,14 @@ export class SubmitJob {
         id: this.runtime.id(),
         topic: `execution.${execution.driver}` as const,
       }));
-    const result = await this.repository.createJob(job, executions, messages);
-    if (!result.created && JSON.stringify(result.job.definition) !== JSON.stringify(definition)) {
+    const result = await this.repository.createJob(
+      job,
+      executions,
+      messages,
+      this.maxActiveJobsPerClient,
+    );
+    if (result.quotaExceeded) throw new ClientQuotaExceededError(definition.clientId);
+    if (!result.created && result.job.definitionHash !== definitionHash) {
       throw new IdempotencyConflictError();
     }
     this.observability.jobSubmitted(result.created);

@@ -1,7 +1,7 @@
 # Browser Automation Service
 
 Plataforma assíncrona e durável de automação de navegadores para serviços hospedados na VPS. Cada
-consumidor envia uma única DSL declarativa; o serviço compila o job para a matriz real de
+consumidor envia um plano declarativo tipado; o serviço compila o job para a matriz real de
 Playwright, Puppeteer e Selenium sem exigir alterações no código do consumidor.
 
 Quando `drivers` e `browsers` não são informados, o job é executado em todas as combinações
@@ -27,7 +27,10 @@ adiciona Chromium, Firefox e Edge, totalizando oito.
 - outbox transacional no PostgreSQL;
 - BullMQ sobre Redis para filas separadas por driver;
 - processos independentes para API, dispatcher e workers;
-- storage local de artefatos, substituível por object storage;
+- storage local ou S3 compatível para artefatos, selecionado por configuração;
+- migrações numeradas, transacionais e protegidas por advisory lock;
+- claim atômico de execução e quota transacional por cliente;
+- logs JSON estruturados com redaction de credenciais;
 - autenticação por API key com SHA-256 e escopos armazenados no PostgreSQL;
 - OpenTelemetry via OTLP HTTP;
 - bloqueio de SSRF para destinos privados, com allowlist explícita;
@@ -53,7 +56,7 @@ Os health checks são públicos. Os demais endpoints exigem `X-API-Key` ou
 | POST   | `/v2/jobs/plan`             | `jobs:write`        | plano sem executar               |
 | POST   | `/v2/jobs`                  | `jobs:write`        | cria job assíncrono              |
 | GET    | `/v2/jobs/{id}`             | `jobs:read`         | snapshot do job                  |
-| GET    | `/v2/jobs/{id}/events`      | `jobs:read`         | snapshot SSE                     |
+| GET    | `/v2/jobs/{id}/events`      | `jobs:read`         | stream SSE até estado terminal   |
 | POST   | `/v2/jobs/{id}/cancel`      | `jobs:write`        | cancelamento cooperativo         |
 | POST   | `/v2/executions/{id}/retry` | `jobs:write`        | retry de falha de infraestrutura |
 | GET    | `/v2/artifacts/{id}`        | `artifacts:read`    | conteúdo do artefato             |
@@ -87,8 +90,9 @@ Content-Type: application/json
 }
 ```
 
-A resposta inicial é `202 Accepted`. Repetir a mesma definição com a mesma `Idempotency-Key` retorna
-o job existente com `200 OK`. Reutilizar a chave com outra definição retorna `409 Conflict`.
+A resposta inicial é `202 Accepted`. A definição recebe fingerprint SHA-256 sobre JSON canônico.
+Repetir a mesma definição com a mesma `Idempotency-Key` retorna o job existente com `200 OK`.
+Reutilizar a chave com outra definição retorna `409 Conflict`.
 
 Filtros opcionais:
 
@@ -102,7 +106,7 @@ Filtros opcionais:
 Com os dois filtros, o compilador avalia o produto cartesiano solicitado. Sem filtros, usa todas as
 capacidades anunciadas pelo deployment.
 
-### DSL v1
+### Automation Plan v1
 
 - navegação: `goto`, `back`, `forward`, `reload`;
 - interação: `click`, `fill`, `type`, `press`, `hover`, `focus`, `check`, `uncheck`, `select`,
@@ -111,8 +115,10 @@ capacidades anunciadas pelo deployment.
 - contexto: `setViewport`;
 - validação e dados: `assert`, `extract`, `screenshot`.
 
-Não há `eval` nem JavaScript arbitrário. A DSL aceita até 100 passos e limita seletores, strings,
-dimensões e timeouts. Screenshots são persistidos como artefatos e o output contém o ID, não base64.
+Esta representação intermediária pequena permite executar a mesma intenção em todos os adapters. Não
+há conversão textual entre drivers, `eval` nem JavaScript arbitrário. O plano aceita até 100 passos
+e limita seletores, strings, dimensões e timeouts. Screenshots são persistidos como artefatos e o
+output contém o ID, não base64.
 
 ## Estados e falhas
 
@@ -137,8 +143,8 @@ npm.cmd ci
 npm.cmd run check
 ```
 
-`npm run check` executa formatação, lint, TypeScript, 138 testes com cobertura estrita de 100%,
-build e auditoria de dependências.
+`npm run check` executa formatação, lint, TypeScript, testes com cobertura estrita de 100%, build e
+auditoria de dependências.
 
 Para desenvolvimento sem containers, PostgreSQL e Redis precisam estar acessíveis e as variáveis de
 `APP_ROLE` devem ser configuradas. Os navegadores locais do Playwright podem ser instalados com:

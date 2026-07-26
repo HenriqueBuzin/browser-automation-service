@@ -15,6 +15,7 @@ import { InMemoryJobRepository } from "../src/infrastructure/persistence/in-memo
 import type { ArtifactStore } from "../src/ports/artifact-store.js";
 import type { ExecutionQueue } from "../src/ports/execution-queue.js";
 import { executionRecord, fixedNow, jobDefinition, jobRecord } from "./helpers/records.js";
+import { definitionFingerprint } from "../src/application/definition-fingerprint.js";
 
 function runtime() {
   let sequence = 0;
@@ -111,7 +112,11 @@ describe("SubmitJob and in-memory persistence", () => {
     const originalCreate = racing.createJob.bind(racing);
     racing.createJob = vi.fn(async (job, executions, messages) => {
       const result = await originalCreate(
-        { ...job, definition: jobDefinition({ clientId: "different" }) },
+        {
+          ...job,
+          definition: jobDefinition({ clientId: "different" }),
+          definitionHash: definitionFingerprint(jobDefinition({ clientId: "different" })),
+        },
         executions,
         messages,
       );
@@ -120,6 +125,16 @@ describe("SubmitJob and in-memory persistence", () => {
     await expect(
       service(racing).execute(jobDefinition(), "idempotency-race"),
     ).rejects.toBeInstanceOf(IdempotencyConflictError);
+  });
+
+  it("admits only one of two concurrent submissions at quota one", async () => {
+    const submit = service(new InMemoryJobRepository(), 1);
+    const results = await Promise.allSettled([
+      submit.execute(jobDefinition(), "concurrent-1"),
+      submit.execute(jobDefinition(), "concurrent-2"),
+    ]);
+    expect(results.filter(({ status }) => status === "fulfilled")).toHaveLength(1);
+    expect(results.filter(({ status }) => status === "rejected")).toHaveLength(1);
   });
 
   it("uses a fallback reason for unsupported compiler plans", async () => {
@@ -210,6 +225,44 @@ describe("SubmitJob and in-memory persistence", () => {
     await vanished.createJob(jobRecord(), [], []);
     vanished.jobs.clear();
     expect(() => vanished.createJob(jobRecord(), [], [])).toThrow("disappeared");
+  });
+
+  it("claims executions once and retries failed artifact deletion", async () => {
+    const repository = new InMemoryJobRepository();
+    const job = jobRecord();
+    const execution = executionRecord();
+    await repository.createJob(job, [execution], []);
+    await expect(
+      repository.claimExecution(execution.id, "playwright", fixedNow),
+    ).resolves.toMatchObject({ attempt: 1, status: "running" });
+    await expect(
+      repository.claimExecution(execution.id, "playwright", fixedNow),
+    ).resolves.toBeUndefined();
+    await expect(
+      repository.claimExecution("missing", "playwright", fixedNow),
+    ).resolves.toBeUndefined();
+
+    const old = {
+      contentType: "image/png",
+      createdAt: new Date(fixedNow.getTime() - 10_000),
+      executionId: execution.id,
+      id: "retry-artifact",
+      name: "screen",
+      path: "path",
+      size: 1,
+    };
+    await repository.addArtifact(old);
+    expect(await repository.claimExpiredArtifacts(fixedNow, 1, fixedNow)).toEqual([old]);
+    await repository.failArtifactDeletion(old.id, new Date(fixedNow.getTime() + 1_000));
+    expect(await repository.claimExpiredArtifacts(fixedNow, 1, fixedNow)).toEqual([]);
+    const retryAt = new Date(fixedNow.getTime() + 1_000);
+    expect(await repository.claimExpiredArtifacts(fixedNow, 1, retryAt)).toEqual([old]);
+    await repository.completeArtifactDeletion(old.id);
+    await repository.failArtifactDeletion("missing", retryAt);
+
+    repository.artifacts.set("legacy-less", { ...old, id: "legacy-less" });
+    repository.artifactDeletion.set("legacy-less", { status: "active" } as never);
+    expect(await repository.claimExpiredArtifacts(fixedNow, 1, retryAt)).toHaveLength(1);
   });
 });
 
@@ -307,6 +360,30 @@ describe("dispatcher, job service, janitor and capacity", () => {
     expect(await janitor.run()).toBe(0);
     expect(store.remove).toHaveBeenCalledTimes(2);
     expect(await repository.findArtifact("old")).toBeUndefined();
+  });
+
+  it("reschedules artifact deletion when the store is unavailable", async () => {
+    const repository = new InMemoryJobRepository();
+    await repository.addArtifact({
+      contentType: "image/png",
+      createdAt: new Date(fixedNow.getTime() - 10_000),
+      executionId: "execution",
+      id: "failed-delete",
+      name: "screen",
+      path: "path",
+      size: 1,
+    });
+    const janitor = new ArtifactJanitor(
+      repository,
+      artifactStore({ remove: vi.fn(async () => Promise.reject(new Error("offline"))) }),
+      1_000,
+      () => fixedNow,
+    );
+    expect(await janitor.run()).toBe(1);
+    expect(repository.artifactDeletion.get("failed-delete")).toMatchObject({
+      attempts: 1,
+      status: "retry",
+    });
   });
 
   it("runs and aborts the dispatcher host", async () => {

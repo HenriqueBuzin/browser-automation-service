@@ -6,6 +6,7 @@ const jobRow = {
   client_id: "test-client",
   created_at: fixedNow,
   definition: jobDefinition(),
+  definition_hash: "definition-hash",
   id: "job",
   idempotency_key: "idempotency",
   status: "queued",
@@ -71,7 +72,7 @@ describe("PostgresJobRepository direct queries", () => {
     await repository.addArtifact(artifact);
     await expect(repository.findArtifact("artifact")).resolves.toEqual(artifact);
     await expect(repository.findArtifact("missing")).resolves.toBeUndefined();
-    await repository.removeArtifact("artifact");
+    await repository.completeArtifactDeletion("artifact");
     expect(pool.query).toHaveBeenCalledTimes(4);
   });
 
@@ -163,7 +164,30 @@ describe("PostgresJobRepository direct queries", () => {
       startedAt: fixedNow,
     });
     await expect(repository.findExecution("missing")).resolves.toBeUndefined();
-    await expect(repository.findExpiredArtifacts(fixedNow, 10)).resolves.toHaveLength(1);
+    await expect(repository.claimExpiredArtifacts(fixedNow, 10, fixedNow)).resolves.toHaveLength(1);
+  });
+
+  it("claims expired artifacts and records durable deletion outcomes", async () => {
+    const { pool, repository } = clientFixture();
+    pool.query
+      .mockResolvedValueOnce({
+        rows: [
+          {
+            content_type: "image/png",
+            created_at: fixedNow,
+            execution_id: "execution",
+            id: "artifact",
+            name: "screen",
+            path: "path",
+            size: "3",
+          },
+        ],
+      })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] });
+    await expect(repository.claimExpiredArtifacts(fixedNow, 1, fixedNow)).resolves.toHaveLength(1);
+    await repository.failArtifactDeletion("artifact", fixedNow);
+    await repository.completeArtifactDeletion("artifact");
   });
 
   it("finds jobs and idempotency records", async () => {
@@ -187,6 +211,66 @@ describe("PostgresJobRepository direct queries", () => {
 });
 
 describe("PostgresJobRepository transactions", () => {
+  it("atomically claims an execution and ignores a lost race", async () => {
+    const { client, repository } = clientFixture();
+    client.query
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({
+        rows: [{ ...executionRow, attempt: 1, started_at: fixedNow, status: "running" }],
+      })
+      .mockResolvedValueOnce({
+        rows: [{ ...executionRow, attempt: 1, started_at: fixedNow, status: "running" }],
+      })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] });
+    await expect(
+      repository.claimExecution("execution", "playwright", fixedNow),
+    ).resolves.toMatchObject({ attempt: 1, status: "running" });
+
+    client.query.mockReset();
+    client.query
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] });
+    await expect(
+      repository.claimExecution("execution", "playwright", fixedNow),
+    ).resolves.toBeUndefined();
+
+    client.query.mockReset();
+    client.query
+      .mockResolvedValueOnce({ rows: [] })
+      .mockRejectedValueOnce(new Error("claim failed"));
+    await expect(repository.claimExecution("execution", "playwright", fixedNow)).rejects.toThrow(
+      "claim failed",
+    );
+    expect(client.query).toHaveBeenCalledWith("ROLLBACK");
+  });
+
+  it("returns an idempotent winner and rejects quota inside the client lock", async () => {
+    const { client, repository } = clientFixture();
+    client.query
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [jobRow] })
+      .mockResolvedValueOnce({ rows: [executionRow] })
+      .mockResolvedValueOnce({ rows: [] });
+    await expect(repository.createJob(jobRecord(), [], [], 1)).resolves.toMatchObject({
+      created: false,
+      job: { definitionHash: "definition-hash" },
+    });
+
+    client.query.mockReset();
+    client.query
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [{ count: "1" }] })
+      .mockResolvedValueOnce({ rows: [] });
+    await expect(repository.createJob(jobRecord(), [], [], 1)).resolves.toMatchObject({
+      quotaExceeded: true,
+    });
+  });
+
   it("creates a job, its executions and outbox atomically", async () => {
     const { client, repository } = clientFixture();
     client.query.mockResolvedValue({ rows: [], rowCount: 1 });

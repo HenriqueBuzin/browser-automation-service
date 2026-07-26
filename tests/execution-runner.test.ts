@@ -204,4 +204,11 @@ describe("ExecutionRunner", () => {
     await context.runner.execute(context.execution.id);
     expect(context.provider.launch).not.toHaveBeenCalled();
   });
+
+  it("releases capacity when the aggregate disappears after an atomic claim", async () => {
+    const context = setup();
+    vi.spyOn(context.repository, "findJob").mockResolvedValue(undefined);
+    await context.runner.execute(context.execution.id);
+    expect(context.provider.launch).not.toHaveBeenCalled();
+  });
 });

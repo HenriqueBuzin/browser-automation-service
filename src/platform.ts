@@ -6,6 +6,7 @@ import {
   PostgresApiKeyAuthenticator,
 } from "./infrastructure/auth/postgres-api-key-authenticator.js";
 import { LocalArtifactStore } from "./infrastructure/artifacts/local-artifact-store.js";
+import { S3ArtifactStore } from "./infrastructure/artifacts/s3-artifact-store.js";
 import { BullMqExecutionQueue } from "./infrastructure/queue/bullmq-execution-queue.js";
 import { BullMqWorkerHost } from "./infrastructure/queue/bullmq-worker-host.js";
 import { PostgresJobRepository } from "./infrastructure/persistence/postgres-job-repository.js";
@@ -30,6 +31,7 @@ import { DestinationPolicy } from "./application/destination-policy.js";
 import { WeightedSemaphore } from "./application/weighted-semaphore.js";
 import { ArtifactJanitor } from "./application/artifact-janitor.js";
 import type { AppConfig } from "./config.js";
+import { createPlatformLogger } from "./application/platform-logger.js";
 
 export type RunningPlatform = {
   close: () => Promise<void>;
@@ -46,10 +48,18 @@ export async function startPlatform(
   signal: AbortSignal,
 ): Promise<RunningPlatform> {
   const pool = new Pool({ connectionString: config.databaseUrl, max: 10 });
+  const logger = createPlatformLogger(config.appRole, config.logLevel);
   await runMigrations(pool);
   const repository = new PostgresJobRepository(pool);
   const queue = new BullMqExecutionQueue(config.redisUrl);
-  const artifacts = new LocalArtifactStore(config.artifactRoot);
+  const artifacts =
+    config.artifactBackend === "s3"
+      ? new S3ArtifactStore(config.s3Bucket, {
+          ...(config.s3Endpoint ? { endpoint: config.s3Endpoint } : {}),
+          forcePathStyle: config.s3ForcePathStyle,
+          region: config.s3Region,
+        })
+      : new LocalArtifactStore(config.artifactRoot);
 
   if (config.appRole === "api") {
     await ensureBootstrapClient(pool, config.apiKey);
@@ -74,6 +84,7 @@ export async function startPlatform(
       repository,
       submitJob,
       swaggerEnabled: config.swaggerEnabled,
+      logLevel: config.logLevel,
     });
     await server.listen({ host: config.host, port: config.port });
     return {
@@ -87,7 +98,7 @@ export async function startPlatform(
   }
 
   if (config.appRole === "dispatcher") {
-    const dispatcher = new OutboxDispatcher(repository, queue, runtime.now);
+    const dispatcher = new OutboxDispatcher(repository, queue, runtime.now, undefined, logger);
     const janitor = new ArtifactJanitor(
       repository,
       artifacts,
@@ -127,6 +138,8 @@ export async function startPlatform(
     artifacts,
     runtime,
     new WeightedSemaphore(config.workerCapacityUnits),
+    undefined,
+    logger,
   );
   const worker = new BullMqWorkerHost(config.redisUrl, driver, runner, config.workerConcurrency);
   await worker.waitUntilReady();

@@ -10,20 +10,26 @@ export type CreateJobResult = {
   created: boolean;
   executions: ExecutionRecord[];
   job: JobRecord;
+  quotaExceeded?: boolean;
 };
 
 export type JobRepository = {
   addArtifact: (artifact: ArtifactRecord) => Promise<void>;
   cancelJob: (jobId: string, now: Date) => Promise<boolean>;
+  claimExpiredArtifacts: (before: Date, limit: number, now: Date) => Promise<ArtifactRecord[]>;
+  claimExecution: (
+    id: string,
+    driver: ExecutionRecord["driver"],
+    now: Date,
+  ) => Promise<ExecutionRecord | undefined>;
   claimOutbox: (limit: number) => Promise<OutboxMessage[]>;
-  countActiveJobs: (clientId: string) => Promise<number>;
   createJob: (
     job: JobRecord,
     executions: ExecutionRecord[],
     messages: OutboxMessage[],
+    maxActiveJobs: number,
   ) => Promise<CreateJobResult>;
   findArtifact: (id: string) => Promise<ArtifactRecord | undefined>;
-  findExpiredArtifacts: (before: Date, limit: number) => Promise<ArtifactRecord[]>;
   findByIdempotency: (
     clientId: string,
     key: string,
@@ -32,7 +38,8 @@ export type JobRepository = {
   findJob: (id: string) => Promise<{ executions: ExecutionRecord[]; job: JobRecord } | undefined>;
   markOutboxFailed: (id: string) => Promise<void>;
   markOutboxPublished: (id: string, now: Date) => Promise<void>;
-  removeArtifact: (id: string) => Promise<void>;
+  completeArtifactDeletion: (id: string) => Promise<void>;
+  failArtifactDeletion: (id: string, retryAt: Date) => Promise<void>;
   resetExecution: (id: string, now: Date, outbox: OutboxMessage) => Promise<boolean>;
   updateExecution: (
     id: string,

@@ -1,5 +1,6 @@
 import type { AutomationJob } from "../../src/contracts/job-contract.js";
 import type { ExecutionRecord, JobRecord } from "../../src/domain/job-state.js";
+import { definitionFingerprint } from "../../src/application/definition-fingerprint.js";
 
 export const fixedNow = new Date("2026-07-26T12:00:00.000Z");
 
@@ -13,9 +14,11 @@ export function jobDefinition(overrides: Partial<AutomationJob> = {}): Automatio
 }
 
 export function jobRecord(overrides: Partial<JobRecord> = {}): JobRecord {
+  const definition = overrides.definition ?? jobDefinition();
   return {
     createdAt: fixedNow,
-    definition: jobDefinition(),
+    definition,
+    definitionHash: definitionFingerprint(definition),
     id: "00000000-0000-4000-8000-000000000001",
     idempotencyKey: "idem-key",
     status: "queued",

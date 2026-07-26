@@ -89,11 +89,12 @@ describe("PostgreSQL authentication and migrations", () => {
       void params;
       return { rows: [] };
     });
-    const pool = { query } as never;
+    const client = { query, release: vi.fn() };
+    const pool = { connect: vi.fn(async () => client), query } as never;
     await ensureBootstrapClient(pool, "bootstrap-secret");
     await runMigrations(pool);
-    expect(query).toHaveBeenCalledTimes(2);
     expect(String(query.mock.calls[0]?.[0])).toContain("browser_api_clients");
-    expect(String(query.mock.calls[1]?.[0])).toContain("browser_artifacts");
+    expect(query.mock.calls.some((call) => call[0].includes("browser_artifacts"))).toBe(true);
+    expect(client.release).toHaveBeenCalledOnce();
   });
 });

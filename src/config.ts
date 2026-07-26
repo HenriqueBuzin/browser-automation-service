@@ -5,6 +5,7 @@ const roles = ["api", "dispatcher", "worker"] as const;
 const drivers = ["playwright", "puppeteer", "selenium"] as const;
 
 export type AppConfig = {
+  artifactBackend: "local" | "s3";
   apiKey: string;
   allowedHosts: string[];
   artifactRetentionMs: number;
@@ -21,6 +22,10 @@ export type AppConfig = {
   redisUrl: string;
   seleniumBrowsers: AutomationBrowser[];
   seleniumRemoteUrl: string | undefined;
+  s3Bucket: string;
+  s3Endpoint: string | undefined;
+  s3ForcePathStyle: boolean;
+  s3Region: string;
   shutdownTimeoutMs: number;
   swaggerEnabled: boolean;
   workerConcurrency: number;
@@ -55,6 +60,11 @@ export function loadConfig(environment: NodeJS.ProcessEnv = process.env): AppCon
     throw new Error("PUBLIC_BASE_URL must start with http:// or https://");
   }
   return {
+    artifactBackend: enumeration(
+      environment.ARTIFACT_BACKEND ?? "local",
+      ["local", "s3"] as const,
+      "ARTIFACT_BACKEND",
+    ),
     apiKey,
     allowedHosts: list(environment.ALLOWED_HOSTS),
     artifactRetentionMs:
@@ -75,7 +85,11 @@ export function loadConfig(environment: NodeJS.ProcessEnv = process.env): AppCon
       50,
     ),
     host: text(environment.HOST, "0.0.0.0"),
-    logLevel: text(environment.LOG_LEVEL, "info"),
+    logLevel: enumeration(
+      environment.LOG_LEVEL ?? "info",
+      ["fatal", "error", "warn", "info", "debug", "trace", "silent"] as const,
+      "LOG_LEVEL",
+    ),
     maxActiveJobsPerClient: integer(
       "MAX_ACTIVE_JOBS_PER_CLIENT",
       environment.MAX_ACTIVE_JOBS_PER_CLIENT,
@@ -88,6 +102,10 @@ export function loadConfig(environment: NodeJS.ProcessEnv = process.env): AppCon
     redisUrl: text(environment.REDIS_URL, "redis://redis:6379/0"),
     seleniumBrowsers: browserList(environment.SELENIUM_BROWSERS),
     seleniumRemoteUrl: optional(environment.BROWSER_SELENIUM_REMOTE_URL)?.replace(/\/+$/u, ""),
+    s3Bucket: text(environment.S3_BUCKET, "browser-artifacts"),
+    s3Endpoint: optional(environment.S3_ENDPOINT)?.replace(/\/+$/u, ""),
+    s3ForcePathStyle: boolean(environment.S3_FORCE_PATH_STYLE, false, "S3_FORCE_PATH_STYLE"),
+    s3Region: text(environment.S3_REGION, "us-east-1"),
     shutdownTimeoutMs: integer(
       "SHUTDOWN_TIMEOUT_MS",
       environment.SHUTDOWN_TIMEOUT_MS,
@@ -130,11 +148,11 @@ function integer(
   return parsed;
 }
 
-function boolean(value: string | undefined, fallback: boolean): boolean {
+function boolean(value: string | undefined, fallback: boolean, name = "SWAGGER_ENABLED"): boolean {
   if (value === undefined) return fallback;
   if (value === "true") return true;
   if (value === "false") return false;
-  throw new Error("SWAGGER_ENABLED must be true or false");
+  throw new Error(`${name} must be true or false`);
 }
 
 function enumeration<const T extends readonly string[]>(

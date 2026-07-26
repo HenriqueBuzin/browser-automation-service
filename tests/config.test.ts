@@ -53,6 +53,7 @@ describe("loadConfig", () => {
         ALLOWED_HOSTS: " Example.COM,*.Internal.test,example.com, ",
         API_KEY: ` ${apiKey} `,
         APP_ROLE: "worker",
+        ARTIFACT_BACKEND: "s3",
         ARTIFACT_RETENTION_HOURS: "24",
         ARTIFACT_ROOT: " C:\\artifacts ",
         DATABASE_URL: " postgres://custom ",
@@ -65,6 +66,10 @@ describe("loadConfig", () => {
         PUBLIC_BASE_URL: "https://automation.test///",
         REDIS_URL: "redis://custom",
         SELENIUM_BROWSERS: " ",
+        S3_BUCKET: "automation",
+        S3_ENDPOINT: "http://minio/",
+        S3_FORCE_PATH_STYLE: "true",
+        S3_REGION: "sa-east-1",
         SHUTDOWN_TIMEOUT_MS: "5000",
         SWAGGER_ENABLED: "false",
         WORKER_CAPACITY_UNITS: "2",
@@ -75,6 +80,7 @@ describe("loadConfig", () => {
       allowedHosts: ["example.com", "*.internal.test"],
       apiKey,
       appRole: "worker",
+      artifactBackend: "s3",
       artifactRetentionMs: 86_400_000,
       artifactRoot: "C:\\artifacts",
       databaseUrl: "postgres://custom",
@@ -87,6 +93,10 @@ describe("loadConfig", () => {
       publicBaseUrl: "https://automation.test",
       redisUrl: "redis://custom",
       seleniumBrowsers: ["chromium"],
+      s3Bucket: "automation",
+      s3Endpoint: "http://minio",
+      s3ForcePathStyle: true,
+      s3Region: "sa-east-1",
       shutdownTimeoutMs: 5000,
       swaggerEnabled: false,
       workerCapacityUnits: 2,
@@ -119,6 +129,13 @@ describe("loadConfig", () => {
       "SWAGGER_ENABLED",
     );
     expect(loadConfig({ API_KEY: apiKey, SWAGGER_ENABLED: "true" }).swaggerEnabled).toBe(true);
+    expect(() => loadConfig({ API_KEY: apiKey, ARTIFACT_BACKEND: "ftp" })).toThrow(
+      "ARTIFACT_BACKEND",
+    );
+    expect(() => loadConfig({ API_KEY: apiKey, S3_FORCE_PATH_STYLE: "yes" })).toThrow(
+      "S3_FORCE_PATH_STYLE",
+    );
+    expect(() => loadConfig({ API_KEY: apiKey, LOG_LEVEL: "verbose" })).toThrow("LOG_LEVEL");
   });
 
   it("rejects unsafe integer ranges and preserves blank defaults", () => {
