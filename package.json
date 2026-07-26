@@ -1,0 +1,41 @@
+{
+  "name": "browser-automation-service",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Multi-engine browser automation control plane for VPS workloads.",
+  "engines": {
+    "node": ">=24.0.0",
+    "npm": ">=11.0.0"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "check": "npm run format:check && npm run lint && npm run typecheck && npm test && npm run build",
+    "dev": "tsx watch src/main.ts",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "lint": "eslint . --max-warnings=0",
+    "start": "node dist/main.js",
+    "test": "vitest run --coverage",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "fastify": "5.10.0",
+    "playwright": "1.61.1",
+    "puppeteer-core": "25.3.0",
+    "ws": "8.21.1"
+  },
+  "devDependencies": {
+    "@eslint/js": "10.0.1",
+    "@types/node": "24.1.0",
+    "@types/ws": "8.18.1",
+    "@vitest/coverage-v8": "4.1.10",
+    "eslint": "10.8.0",
+    "prettier": "3.6.2",
+    "tsx": "4.20.3",
+    "typescript": "5.9.2",
+    "typescript-eslint": "8.65.0",
+    "vitest": "4.1.10"
+  }
+}
