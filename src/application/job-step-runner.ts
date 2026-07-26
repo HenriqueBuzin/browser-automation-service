@@ -6,14 +6,27 @@ export type StepRunResult = {
   steps: StepResult[];
 };
 
+export type StepRunnerHooks = {
+  beforeStep?: (index: number) => Promise<void>;
+  storeScreenshot?: (name: string, content: Buffer) => Promise<string>;
+};
+
 export class JobStepRunner {
-  public async run(session: AutomationSession, steps: AutomationStep[]): Promise<StepRunResult> {
+  public async run(
+    session: AutomationSession,
+    steps: AutomationStep[],
+    hooks: StepRunnerHooks = {},
+  ): Promise<StepRunResult> {
     const outputs: Record<string, boolean | number | string> = {};
     const results: StepResult[] = [];
     for (const [index, step] of steps.entries()) {
+      await hooks.beforeStep?.(index);
       const startedAt = Date.now();
       try {
-        const output = await this.#execute(session, step);
+        let output = await this.#execute(session, step);
+        if (step.action === "screenshot" && hooks.storeScreenshot && output !== undefined) {
+          output = await hooks.storeScreenshot(step.as, Buffer.from(String(output), "base64"));
+        }
         if ((step.action === "extract" || step.action === "screenshot") && output !== undefined) {
           outputs[step.as] = output;
         }

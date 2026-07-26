@@ -1,4 +1,4 @@
-FROM node:24-bookworm AS build
+FROM node:24.18.0-bookworm AS build
 
 ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
 WORKDIR /app
@@ -10,7 +10,21 @@ COPY tsconfig.json tsconfig.build.json ./
 COPY src ./src
 RUN npm run build
 
-FROM mcr.microsoft.com/playwright:v1.61.1-noble AS runtime
+FROM node:24.18.0-bookworm-slim AS control
+
+ENV NODE_ENV=production \
+    PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
+WORKDIR /app
+
+COPY package.json package-lock.json ./
+RUN npm ci --omit=dev \
+    && npm cache clean --force
+COPY --from=build /app/dist ./dist
+
+USER node
+CMD ["node", "dist/main.js"]
+
+FROM mcr.microsoft.com/playwright:v1.62.0-noble AS browser-worker
 
 ENV NODE_ENV=production \
     PLAYWRIGHT_BROWSERS_PATH=/ms-playwright \
@@ -18,7 +32,6 @@ ENV NODE_ENV=production \
     PUPPETEER_FIREFOX_EXECUTABLE_PATH=/usr/local/bin/puppeteer-firefox
 
 ARG PUPPETEER_FIREFOX_BUILD=stable_152.0.4
-
 WORKDIR /app
 
 COPY --chown=pwuser:pwuser package.json package-lock.json ./
@@ -33,9 +46,4 @@ RUN apt-get update \
 COPY --from=build --chown=pwuser:pwuser /app/dist ./dist
 
 USER pwuser
-EXPOSE 3000
-
-HEALTHCHECK --interval=15s --timeout=3s --start-period=20s --retries=3 \
-  CMD ["node", "dist/healthcheck.js"]
-
 CMD ["node", "dist/main.js"]

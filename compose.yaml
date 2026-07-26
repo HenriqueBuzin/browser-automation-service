@@ -1,50 +1,161 @@
+x-platform-environment: &platform-environment
+  API_KEY: ${API_KEY}
+  DATABASE_URL: postgres://browser:${POSTGRES_PASSWORD}@postgres:5432/browser_automation
+  REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
+  ARTIFACT_ROOT: /data/artifacts
+  LOG_LEVEL: ${LOG_LEVEL:-info}
+  OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+  ALLOWED_HOSTS: ${ALLOWED_HOSTS:-}
+  MAX_ACTIVE_JOBS_PER_CLIENT: ${MAX_ACTIVE_JOBS_PER_CLIENT:-10}
+  ARTIFACT_RETENTION_HOURS: ${ARTIFACT_RETENTION_HOURS:-168}
+  BROWSER_SELENIUM_REMOTE_URL: http://selenium-hub:4444/wd/hub
+  SELENIUM_BROWSERS: chromium,firefox,edge
+
+x-platform-service: &platform-service
+  restart: unless-stopped
+  init: true
+  environment: *platform-environment
+  depends_on:
+    postgres:
+      condition: service_healthy
+    redis:
+      condition: service_healthy
+  networks:
+    - browser-automation
+  security_opt:
+    - no-new-privileges:true
+  cap_drop:
+    - ALL
+
 services:
-  browser-automation-service:
-    build:
-      context: .
-    image: browser-automation-service:1.61.1
-    container_name: browser-automation-service
+  postgres:
+    image: postgres:18.4-bookworm
     restart: unless-stopped
-    init: true
-    env_file:
-      - path: .env
-        required: false
-    ports:
-      - "127.0.0.1:${PORT:-3000}:3000"
-    expose:
-      - "3000"
-    shm_size: "1gb"
-    security_opt:
-      - no-new-privileges:true
-    cap_drop:
-      - ALL
+    environment:
+      POSTGRES_DB: browser_automation
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_USER: browser
+    volumes:
+      - postgres-data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U browser -d browser_automation"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
     networks:
       - browser-automation
-    deploy:
-      resources:
-        limits:
-          memory: 2g
-          cpus: "2.0"
+
+  redis:
+    image: redis:8.8.0-alpine
+    restart: unless-stopped
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+    command:
+      - sh
+      - -c
+      - exec redis-server --appendonly yes --requirepass "$${REDIS_PASSWORD}"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD-SHELL", 'redis-cli -a "$$REDIS_PASSWORD" ping | grep PONG']
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    networks:
+      - browser-automation
+
+  api:
+    <<: *platform-service
+    build:
+      context: .
+      target: control
+    image: browser-automation-control:2.0.0
+    environment:
+      <<: *platform-environment
+      APP_ROLE: api
+      HOST: 0.0.0.0
+      PORT: 3000
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-http://localhost:3000}
+      SWAGGER_ENABLED: ${SWAGGER_ENABLED:-true}
+    ports:
+      - "127.0.0.1:${PORT:-3000}:3000"
+    volumes:
+      - artifacts:/data/artifacts:ro
+    healthcheck:
+      test: ["CMD", "node", "dist/healthcheck.js"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+
+  dispatcher:
+    <<: *platform-service
+    image: browser-automation-control:2.0.0
+    environment:
+      <<: *platform-environment
+      APP_ROLE: dispatcher
+
+  worker-playwright:
+    <<: *platform-service
+    build:
+      context: .
+      target: browser-worker
+    image: browser-automation-browser-worker:2.0.0
+    environment:
+      <<: *platform-environment
+      APP_ROLE: worker
+      WORKER_DRIVER: playwright
+      WORKER_CONCURRENCY: ${PLAYWRIGHT_CONCURRENCY:-2}
+      WORKER_CAPACITY_UNITS: ${PLAYWRIGHT_CAPACITY_UNITS:-3}
+    shm_size: "1gb"
+    volumes:
+      - artifacts:/data/artifacts
+
+  worker-puppeteer:
+    <<: *platform-service
+    image: browser-automation-browser-worker:2.0.0
+    environment:
+      <<: *platform-environment
+      APP_ROLE: worker
+      WORKER_DRIVER: puppeteer
+      WORKER_CONCURRENCY: ${PUPPETEER_CONCURRENCY:-2}
+      WORKER_CAPACITY_UNITS: ${PUPPETEER_CAPACITY_UNITS:-2}
+    shm_size: "1gb"
+    volumes:
+      - artifacts:/data/artifacts
+
+  worker-selenium:
+    <<: *platform-service
+    profiles: ["selenium-all"]
+    image: browser-automation-control:2.0.0
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      selenium-hub:
+        condition: service_started
+    environment:
+      <<: *platform-environment
+      APP_ROLE: worker
+      WORKER_DRIVER: selenium
+      WORKER_CONCURRENCY: ${SELENIUM_CONCURRENCY:-3}
+      WORKER_CAPACITY_UNITS: ${SELENIUM_CAPACITY_UNITS:-3}
+    volumes:
+      - artifacts:/data/artifacts
 
   selenium-hub:
     image: selenium/hub:4.46.0
-    profiles: ["selenium", "selenium-all"]
+    profiles: ["selenium-all"]
     restart: unless-stopped
-    expose:
-      - "4442"
-      - "4443"
-      - "4444"
-    networks:
-      - browser-automation
-    security_opt:
-      - no-new-privileges:true
+    expose: ["4442", "4443", "4444"]
+    networks: [browser-automation]
+    security_opt: ["no-new-privileges:true"]
 
   selenium-chromium:
     image: selenium/node-chromium:4.46.0
-    profiles: ["selenium", "selenium-all"]
+    profiles: ["selenium-all"]
     restart: unless-stopped
-    depends_on:
-      - selenium-hub
+    depends_on: [selenium-hub]
     shm_size: "1gb"
     environment: &selenium-node-environment
       SE_EVENT_BUS_HOST: selenium-hub
@@ -52,36 +163,33 @@ services:
       SE_EVENT_BUS_SUBSCRIBE_PORT: "4443"
       SE_NODE_MAX_SESSIONS: "1"
       SE_NODE_SESSION_TIMEOUT: "900"
-    networks:
-      - browser-automation
-    security_opt:
-      - no-new-privileges:true
+    networks: [browser-automation]
+    security_opt: ["no-new-privileges:true"]
 
   selenium-firefox:
     image: selenium/node-firefox:4.46.0
     profiles: ["selenium-all"]
     restart: unless-stopped
-    depends_on:
-      - selenium-hub
+    depends_on: [selenium-hub]
     shm_size: "1gb"
     environment: *selenium-node-environment
-    networks:
-      - browser-automation
-    security_opt:
-      - no-new-privileges:true
+    networks: [browser-automation]
+    security_opt: ["no-new-privileges:true"]
 
   selenium-edge:
     image: selenium/node-edge:4.46.0
     profiles: ["selenium-all"]
     restart: unless-stopped
-    depends_on:
-      - selenium-hub
+    depends_on: [selenium-hub]
     shm_size: "1gb"
     environment: *selenium-node-environment
-    networks:
-      - browser-automation
-    security_opt:
-      - no-new-privileges:true
+    networks: [browser-automation]
+    security_opt: ["no-new-privileges:true"]
+
+volumes:
+  artifacts:
+  postgres-data:
+  redis-data:
 
 networks:
   browser-automation:

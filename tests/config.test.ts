@@ -8,14 +8,15 @@ describe("loadConfig", () => {
     const config = loadConfig({ API_KEY: apiKey });
     expect(config).toMatchObject({
       apiKey,
-      maxConcurrentBrowsers: 2,
-      maxJobParallelism: 2,
-      maxLeaseDurationMs: 900_000,
-      maxQueueSize: 20,
+      appRole: "api",
+      artifactRetentionMs: 604_800_000,
+      maxActiveJobsPerClient: 10,
       port: 3000,
       seleniumBrowsers: ["chromium"],
+      workerCapacityUnits: 2,
+      workerConcurrency: 1,
     });
-    expect(config.publicWsUrl).toBeUndefined();
+    expect(config.publicBaseUrl).toBe("http://localhost:3000");
   });
 
   it("rejects missing or weak secrets", () => {
@@ -23,10 +24,10 @@ describe("loadConfig", () => {
     expect(() => loadConfig({ API_KEY: "weak" })).toThrow("at least 32");
   });
 
-  it("rejects invalid numeric and WebSocket configuration", () => {
+  it("rejects invalid numeric and public URL configuration", () => {
     expect(() => loadConfig({ API_KEY: apiKey, PORT: "nope" })).toThrow("PORT");
-    expect(() => loadConfig({ API_KEY: apiKey, PUBLIC_WS_URL: "https://example.test" })).toThrow(
-      "PUBLIC_WS_URL",
+    expect(() => loadConfig({ API_KEY: apiKey, PUBLIC_BASE_URL: "ftp://example.test" })).toThrow(
+      "PUBLIC_BASE_URL",
     );
   });
 

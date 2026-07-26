@@ -1,9 +1,10 @@
-export const automationEngines = ["playwright", "puppeteer", "selenium"] as const;
-export type AutomationEngine = (typeof automationEngines)[number];
-export type AutomationProtocol = "playwright" | "cdp" | "webdriver" | "webdriver-bidi";
+import type { AutomationBrowser, AutomationEngine } from "../contracts/job-contract.js";
 
+export const automationEngines = ["playwright", "puppeteer", "selenium"] as const;
 export const automationBrowsers = ["chromium", "firefox", "webkit", "edge"] as const;
-export type AutomationBrowser = (typeof automationBrowsers)[number];
+
+export type { AutomationBrowser, AutomationEngine };
+export type AutomationProtocol = "playwright" | "cdp" | "webdriver" | "webdriver-bidi";
 
 export type ProviderSession = {
   browser: AutomationBrowser;
@@ -18,5 +19,5 @@ export type ProviderSession = {
 export type AutomationProvider = {
   browsers: readonly AutomationBrowser[];
   engine: AutomationEngine;
-  launch: (leaseId: string, browser: AutomationBrowser) => Promise<ProviderSession>;
+  launch: (executionId: string, browser: AutomationBrowser) => Promise<ProviderSession>;
 };
