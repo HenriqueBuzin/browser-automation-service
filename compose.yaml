@@ -1,7 +1,7 @@
 x-platform-environment: &platform-environment
-  API_KEY: ${API_KEY}
-  DATABASE_URL: postgres://browser:${POSTGRES_PASSWORD}@postgres:5432/browser_automation
-  REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
+  API_KEY: ${API_KEY:?API_KEY is required}
+  DATABASE_URL: ${DATABASE_URL:?DATABASE_URL is required}
+  REDIS_URL: redis://:${REDIS_PASSWORD:?REDIS_PASSWORD is required}@redis:6379/0
   ARTIFACT_ROOT: /data/artifacts
   ARTIFACT_BACKEND: ${ARTIFACT_BACKEND:-local}
   S3_BUCKET: ${S3_BUCKET:-browser-artifacts}
@@ -23,41 +23,22 @@ x-platform-service: &platform-service
   init: true
   environment: *platform-environment
   depends_on:
-    postgres:
-      condition: service_healthy
     redis:
       condition: service_healthy
   networks:
-    - browser-automation
+    - browser-automation-internal
+    - postgres-network
   security_opt:
     - no-new-privileges:true
   cap_drop:
     - ALL
 
 services:
-  postgres:
-    image: postgres:18.4-bookworm
-    restart: unless-stopped
-    environment:
-      POSTGRES_DB: browser_automation
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-      POSTGRES_USER: browser
-    volumes:
-      - postgres-data:/var/lib/postgresql
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U browser -d browser_automation"]
-      start_period: 120s
-      interval: 5s
-      timeout: 3s
-      retries: 20
-    networks:
-      - browser-automation
-
   redis:
     image: redis:8.8.0-alpine
     restart: unless-stopped
     environment:
-      REDIS_PASSWORD: ${REDIS_PASSWORD}
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD is required}
     command:
       - sh
       - -c
@@ -70,7 +51,7 @@ services:
       timeout: 3s
       retries: 20
     networks:
-      - browser-automation
+      - browser-automation-internal
 
   api:
     <<: *platform-service
@@ -87,6 +68,15 @@ services:
       SWAGGER_ENABLED: ${SWAGGER_ENABLED:-true}
     ports:
       - "127.0.0.1:${PORT:-3000}:3000"
+    networks:
+      browser-automation-internal:
+      postgres-network:
+      proxy-network:
+        aliases:
+          - browser-automation-api
+      browser-automation-network:
+        aliases:
+          - browser-automation-api
     volumes:
       - artifacts:/data/artifacts:ro
     healthcheck:
@@ -119,6 +109,10 @@ services:
     shm_size: "1gb"
     volumes:
       - artifacts:/data/artifacts
+    networks:
+      - browser-automation-internal
+      - postgres-network
+      - browser-automation-network
 
   worker-puppeteer:
     <<: *platform-service
@@ -132,14 +126,16 @@ services:
     shm_size: "1gb"
     volumes:
       - artifacts:/data/artifacts
+    networks:
+      - browser-automation-internal
+      - postgres-network
+      - browser-automation-network
 
   worker-selenium:
     <<: *platform-service
     profiles: ["selenium-all"]
     image: browser-automation-control:2.0.0
     depends_on:
-      postgres:
-        condition: service_healthy
       redis:
         condition: service_healthy
       selenium-hub:
@@ -154,13 +150,16 @@ services:
       WORKER_CAPACITY_UNITS: ${SELENIUM_CAPACITY_UNITS:-3}
     volumes:
       - artifacts:/data/artifacts
+    networks:
+      - browser-automation-internal
+      - postgres-network
 
   selenium-hub:
     image: selenium/hub:4.46.0
     profiles: ["selenium-all"]
     restart: unless-stopped
     expose: ["4442", "4443", "4444"]
-    networks: [browser-automation]
+    networks: [browser-automation-internal]
     security_opt: ["no-new-privileges:true"]
 
   selenium-chromium:
@@ -175,7 +174,9 @@ services:
       SE_EVENT_BUS_SUBSCRIBE_PORT: "4443"
       SE_NODE_MAX_SESSIONS: "1"
       SE_NODE_SESSION_TIMEOUT: "900"
-    networks: [browser-automation]
+    networks:
+      - browser-automation-internal
+      - browser-automation-network
     security_opt: ["no-new-privileges:true"]
 
   selenium-firefox:
@@ -185,7 +186,9 @@ services:
     depends_on: [selenium-hub]
     shm_size: "1gb"
     environment: *selenium-node-environment
-    networks: [browser-automation]
+    networks:
+      - browser-automation-internal
+      - browser-automation-network
     security_opt: ["no-new-privileges:true"]
 
   selenium-edge:
@@ -195,14 +198,24 @@ services:
     depends_on: [selenium-hub]
     shm_size: "1gb"
     environment: *selenium-node-environment
-    networks: [browser-automation]
+    networks:
+      - browser-automation-internal
+      - browser-automation-network
     security_opt: ["no-new-privileges:true"]
 
 volumes:
   artifacts:
-  postgres-data:
   redis-data:
 
 networks:
-  browser-automation:
-    name: browser-automation
+  browser-automation-internal:
+    name: browser-automation-internal
+  browser-automation-network:
+    external: true
+    name: ${BROWSER_AUTOMATION_NETWORK:-browser-automation-network}
+  postgres-network:
+    external: true
+    name: ${POSTGRES_NETWORK:-postgres-network}
+  proxy-network:
+    external: true
+    name: ${PROXY_NETWORK:-proxy-network}
