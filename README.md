@@ -156,10 +156,24 @@ npx.cmd playwright install chromium firefox webkit
 
 ## Docker Compose
 
-Crie o arquivo de ambiente e substitua os três segredos:
+O deployment usa o PostgreSQL compartilhado da VPS pela rede externa `postgres-network`. Antes do
+primeiro start, crie o usuário e o banco `browser_automation` no PostgreSQL central e confirme que o
+hostname usado em `DATABASE_URL` resolve nessa rede.
+
+Crie uma vez as redes externas da VPS:
+
+```bash
+docker network inspect proxy-network >/dev/null 2>&1 || docker network create proxy-network
+docker network inspect postgres-network >/dev/null 2>&1 || docker network create postgres-network
+docker network inspect browser-automation-network >/dev/null 2>&1 || docker network create browser-automation-network
+```
+
+Crie o arquivo de ambiente e substitua `API_KEY`, a senha embutida em `DATABASE_URL` e
+`REDIS_PASSWORD`:
 
 ```bash
 cp .env.example .env
+# Execute três vezes e use valores diferentes para API, PostgreSQL e Redis:
 openssl rand -hex 32
 docker compose up -d --build
 docker compose ps
@@ -167,12 +181,33 @@ docker compose ps
 
 O deployment padrão inicia:
 
-- PostgreSQL;
 - Redis;
 - API;
 - dispatcher;
 - worker Playwright;
 - worker Puppeteer.
+
+A API entra nas redes externas `proxy-network`, `postgres-network` e `browser-automation-network`.
+Dispatcher e workers entram na rede do PostgreSQL; somente API e processos que realmente abrem
+páginas entram na rede dos consumidores.
+
+Um consumidor Docker conecta somente à rede de automação:
+
+```yaml
+services:
+  app:
+    networks:
+      - default
+      - browser-automation-network
+
+networks:
+  browser-automation-network:
+    external: true
+    name: ${BROWSER_AUTOMATION_NETWORK:-browser-automation-network}
+```
+
+Dentro dessa rede, a URL estável da API é `http://browser-automation-api:3000`. Consumidores nunca
+entram na `postgres-network`.
 
 A API é publicada somente em `127.0.0.1`. Para habilitar Selenium:
 
