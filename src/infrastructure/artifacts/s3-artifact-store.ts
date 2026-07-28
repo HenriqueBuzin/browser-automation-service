@@ -3,6 +3,7 @@ import {
   GetObjectCommand,
   PutObjectCommand,
   S3Client,
+  type S3ClientConfig,
 } from "@aws-sdk/client-s3";
 import type { ArtifactRecord } from "../../domain/artifact.js";
 import type { ArtifactStore, StoredArtifact } from "../../ports/artifact-store.js";
@@ -12,13 +13,14 @@ export class S3ArtifactStore implements ArtifactStore {
 
   public constructor(
     private readonly bucket: string,
-    options: { endpoint?: string; forcePathStyle?: boolean; region?: string } = {},
+    options: Pick<S3ClientConfig, "credentials" | "endpoint" | "forcePathStyle" | "region"> = {},
     client?: S3Client,
   ) {
     this.#client =
       client ??
       new S3Client({
         ...(options.endpoint ? { endpoint: options.endpoint } : {}),
+        ...(options.credentials ? { credentials: options.credentials } : {}),
         ...(options.forcePathStyle === undefined ? {} : { forcePathStyle: options.forcePathStyle }),
         ...(options.region ? { region: options.region } : {}),
       });

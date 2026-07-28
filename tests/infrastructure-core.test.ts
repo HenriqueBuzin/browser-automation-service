@@ -91,9 +91,11 @@ describe("PostgreSQL authentication and migrations", () => {
     });
     const client = { query, release: vi.fn() };
     const pool = { connect: vi.fn(async () => client), query } as never;
-    await ensureBootstrapClient(pool, "bootstrap-secret");
+    const bootstrapHash = hashKey("bootstrap-secret");
+    await ensureBootstrapClient(pool, bootstrapHash);
     await runMigrations(pool);
     expect(String(query.mock.calls[0]?.[0])).toContain("browser_api_clients");
+    expect(query.mock.calls[0]?.[1]?.[1]).toBe(bootstrapHash);
     expect(query.mock.calls.some((call) => call[0].includes("browser_artifacts"))).toBe(true);
     expect(client.release).toHaveBeenCalledOnce();
   });

@@ -186,3 +186,8 @@ dist/
 coverage/
 *.tsbuildinfo
 npm-debug.log*
+
+# Runtime secrets (only documentation and placeholders are versioned)
+secrets/*
+!secrets/README.md
+!secrets/*.example

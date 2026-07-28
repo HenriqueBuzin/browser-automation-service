@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
 import type { AutomationBrowser, AutomationEngine } from "./contracts/job-contract.js";
 
 const seleniumBrowserNames = ["chromium", "firefox", "edge"] as const;
@@ -6,11 +8,13 @@ const drivers = ["playwright", "puppeteer", "selenium"] as const;
 
 export type AppConfig = {
   artifactBackend: "local" | "s3";
-  apiKey: string;
   allowedHosts: string[];
   artifactRetentionMs: number;
   appRole: (typeof roles)[number];
   artifactRoot: string;
+  awsAccessKeyId: string | undefined;
+  awsSecretAccessKey: string | undefined;
+  bootstrapApiKeyHash: string | undefined;
   databaseUrl: string;
   dispatcherIntervalMs: number;
   host: string;
@@ -33,10 +37,25 @@ export type AppConfig = {
   workerDriver: AutomationEngine | undefined;
 };
 
-export function loadConfig(environment: NodeJS.ProcessEnv = process.env): AppConfig {
-  const apiKey = required(environment.API_KEY, "API_KEY");
-  if (apiKey.length < 32) throw new Error("API_KEY must contain at least 32 characters");
+type SecretFileReader = (path: string) => Buffer;
+
+export function loadConfig(
+  environment: NodeJS.ProcessEnv = process.env,
+  readSecretFile: SecretFileReader = (path) => readFileSync(path),
+): AppConfig {
   const appRole = enumeration(environment.APP_ROLE ?? "api", roles, "APP_ROLE");
+  const artifactBackend = enumeration(
+    environment.ARTIFACT_BACKEND ?? "local",
+    ["local", "s3"] as const,
+    "ARTIFACT_BACKEND",
+  );
+  const bootstrapApiKeyHash =
+    appRole === "api" ? readApiKeyHash(environment, readSecretFile) : undefined;
+  const awsAccessKeyId = secretText(environment, "AWS_ACCESS_KEY_ID", readSecretFile);
+  const awsSecretAccessKey = secretText(environment, "AWS_SECRET_ACCESS_KEY", readSecretFile);
+  if (Boolean(awsAccessKeyId) !== Boolean(awsSecretAccessKey)) {
+    throw new Error("AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY must be configured together");
+  }
   const workerDriver = environment.WORKER_DRIVER
     ? enumeration(environment.WORKER_DRIVER, drivers, "WORKER_DRIVER")
     : undefined;
@@ -60,12 +79,7 @@ export function loadConfig(environment: NodeJS.ProcessEnv = process.env): AppCon
     throw new Error("PUBLIC_BASE_URL must start with http:// or https://");
   }
   return {
-    artifactBackend: enumeration(
-      environment.ARTIFACT_BACKEND ?? "local",
-      ["local", "s3"] as const,
-      "ARTIFACT_BACKEND",
-    ),
-    apiKey,
+    artifactBackend,
     allowedHosts: list(environment.ALLOWED_HOSTS),
     artifactRetentionMs:
       integer("ARTIFACT_RETENTION_HOURS", environment.ARTIFACT_RETENTION_HOURS, 168, 1) *
@@ -74,10 +88,12 @@ export function loadConfig(environment: NodeJS.ProcessEnv = process.env): AppCon
       1_000,
     appRole,
     artifactRoot: text(environment.ARTIFACT_ROOT, "/data/artifacts"),
-    databaseUrl: text(
-      environment.DATABASE_URL,
+    awsAccessKeyId,
+    awsSecretAccessKey,
+    bootstrapApiKeyHash,
+    databaseUrl:
+      secretText(environment, "DATABASE_URL", readSecretFile) ??
       "postgres://browser:browser@postgres:5432/browser_automation",
-    ),
     dispatcherIntervalMs: integer(
       "DISPATCHER_INTERVAL_MS",
       environment.DISPATCHER_INTERVAL_MS,
@@ -99,7 +115,7 @@ export function loadConfig(environment: NodeJS.ProcessEnv = process.env): AppCon
     otelEndpoint: optional(environment.OTEL_EXPORTER_OTLP_ENDPOINT),
     port: integer("PORT", environment.PORT, 3_000, 1),
     publicBaseUrl,
-    redisUrl: text(environment.REDIS_URL, "redis://redis:6379/0"),
+    redisUrl: redisUrl(environment, readSecretFile),
     seleniumBrowsers: browserList(environment.SELENIUM_BROWSERS),
     seleniumRemoteUrl: optional(environment.BROWSER_SELENIUM_REMOTE_URL)?.replace(/\/+$/u, ""),
     s3Bucket: text(environment.S3_BUCKET, "browser-artifacts"),
@@ -119,9 +135,71 @@ export function loadConfig(environment: NodeJS.ProcessEnv = process.env): AppCon
   };
 }
 
-function required(value: string | undefined, name: string): string {
-  const normalized = value?.trim();
-  if (!normalized) throw new Error(`${name} is required`);
+function readApiKeyHash(environment: NodeJS.ProcessEnv, readSecretFile: SecretFileReader): string {
+  const secret = secretBuffer(environment, "API_KEY", readSecretFile);
+  if (!secret) throw new Error("API_KEY or API_KEY_FILE is required");
+  try {
+    if (secret.byteLength < 32) {
+      throw new Error("API_KEY must contain at least 32 characters");
+    }
+    return createHash("sha256").update(secret).digest("hex");
+  } finally {
+    secret.fill(0);
+  }
+}
+
+function redisUrl(environment: NodeJS.ProcessEnv, readSecretFile: SecretFileReader): string {
+  const url = secretText(environment, "REDIS_URL", readSecretFile);
+  const password = secretText(environment, "REDIS_PASSWORD", readSecretFile);
+  if (url && password) {
+    throw new Error("REDIS_URL and REDIS_PASSWORD are mutually exclusive");
+  }
+  return (
+    url ??
+    (password ? `redis://:${encodeURIComponent(password)}@redis:6379/0` : "redis://redis:6379/0")
+  );
+}
+
+function secretText(
+  environment: NodeJS.ProcessEnv,
+  name: string,
+  readSecretFile: SecretFileReader,
+): string | undefined {
+  const secret = secretBuffer(environment, name, readSecretFile);
+  if (!secret) return undefined;
+  try {
+    return secret.toString("utf8");
+  } finally {
+    secret.fill(0);
+  }
+}
+
+function secretBuffer(
+  environment: NodeJS.ProcessEnv,
+  name: string,
+  readSecretFile: SecretFileReader,
+): Buffer | undefined {
+  const direct = optional(environment[name]);
+  const file = optional(environment[`${name}_FILE`]);
+  if (direct && file) throw new Error(`${name} and ${name}_FILE are mutually exclusive`);
+  if (direct) return Buffer.from(direct, "utf8");
+  if (!file) return undefined;
+  let contents: Buffer;
+  try {
+    contents = readSecretFile(file);
+  } catch (error) {
+    throw new Error(`Unable to read ${name}_FILE '${file}'`, { cause: error });
+  }
+  let start = 0;
+  while (start < contents.byteLength && contents.readUInt8(start) <= 0x20) start += 1;
+  let end = contents.byteLength;
+  while (end > start && contents.readUInt8(end - 1) <= 0x20) end -= 1;
+  const normalized = Buffer.from(contents.subarray(start, end));
+  contents.fill(0);
+  if (normalized.byteLength === 0) {
+    normalized.fill(0);
+    throw new Error(`${name}_FILE '${file}' is empty`);
+  }
   return normalized;
 }
 

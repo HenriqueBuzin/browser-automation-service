@@ -30,6 +30,7 @@ const mocks = vi.hoisted(() => {
     queue,
     server,
     worker,
+    s3Options: [] as unknown[],
   };
 });
 
@@ -58,7 +59,11 @@ vi.mock("../src/infrastructure/artifacts/local-artifact-store.js", () => ({
   LocalArtifactStore: class {},
 }));
 vi.mock("../src/infrastructure/artifacts/s3-artifact-store.js", () => ({
-  S3ArtifactStore: class {},
+  S3ArtifactStore: class {
+    constructor(_bucket: string, options: unknown) {
+      mocks.s3Options.push(options);
+    }
+  },
 }));
 vi.mock("../src/infrastructure/auth/postgres-api-key-authenticator.js", () => ({
   ensureBootstrapClient: vi.fn(async () => undefined),
@@ -181,10 +186,12 @@ function config(overrides: Partial<AppConfig> = {}): AppConfig {
   return {
     artifactBackend: "local",
     allowedHosts: [],
-    apiKey: "a".repeat(32),
     appRole: "api",
     artifactRetentionMs: 1_000,
     artifactRoot: "/artifacts",
+    awsAccessKeyId: undefined,
+    awsSecretAccessKey: undefined,
+    bootstrapApiKeyHash: "a".repeat(64),
     databaseUrl: "postgres://database",
     dispatcherIntervalMs: 100,
     host: "127.0.0.1",
@@ -213,6 +220,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   mocks.providerArguments.length = 0;
   mocks.connectorArguments.length = 0;
+  mocks.s3Options.length = 0;
 });
 
 describe("platform composition root", () => {
@@ -244,6 +252,27 @@ describe("platform composition root", () => {
     );
     await running.close();
     expect(mocks.buildServer).toHaveBeenCalledOnce();
+  });
+
+  it("passes file-loaded credentials to the S3 client", async () => {
+    const running = await startPlatform(
+      config({
+        artifactBackend: "s3",
+        awsAccessKeyId: "access",
+        awsSecretAccessKey: "secret",
+      }),
+      new AbortController().signal,
+    );
+    await running.close();
+    expect(mocks.s3Options[0]).toMatchObject({
+      credentials: { accessKeyId: "access", secretAccessKey: "secret" },
+    });
+  });
+
+  it("rejects an API configuration without a bootstrap key hash", async () => {
+    await expect(
+      startPlatform(config({ bootstrapApiKeyHash: undefined }), new AbortController().signal),
+    ).rejects.toThrow("API bootstrap key hash is required");
   });
 
   it("starts and closes the dispatcher role", async () => {

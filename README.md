@@ -158,7 +158,7 @@ npx.cmd playwright install chromium firefox webkit
 
 O deployment usa o PostgreSQL compartilhado da VPS pela rede externa `postgres-network`. Antes do
 primeiro start, crie o usuário e o banco `browser_automation` no PostgreSQL central e confirme que o
-hostname usado em `DATABASE_URL` resolve nessa rede.
+hostname registrado em `secrets/database_url` resolve nessa rede.
 
 Crie uma vez as redes externas da VPS:
 
@@ -168,16 +168,24 @@ docker network inspect postgres-network >/dev/null 2>&1 || docker network create
 docker network inspect browser-automation-network >/dev/null 2>&1 || docker network create browser-automation-network
 ```
 
-Crie o arquivo de ambiente e substitua `API_KEY`, a senha embutida em `DATABASE_URL` e
-`REDIS_PASSWORD`:
+Crie o arquivo de ambiente apenas para configurações não secretas e prepare os Docker Secrets:
 
 ```bash
 cp .env.example .env
-# Execute três vezes e use valores diferentes para API, PostgreSQL e Redis:
-openssl rand -hex 32
+install -d -m 700 secrets
+openssl rand -hex 32 > secrets/api_key
+openssl rand -hex 32 > secrets/redis_password
+cp secrets/database_url.example secrets/database_url
+chmod 600 secrets/api_key secrets/redis_password secrets/database_url
+# Edite secrets/database_url e use a URL real do PostgreSQL central.
 docker compose up -d --build
 docker compose ps
 ```
+
+Os arquivos sem sufixo `.example` são ignorados pelo Git. O Compose monta cada segredo somente nos
+serviços que precisam dele, em `/run/secrets`; a chave bootstrap da API não é entregue ao dispatcher
+nem aos workers. A aplicação aceita `*_FILE` e mantém somente o hash SHA-256 da chave bootstrap
+depois da inicialização da configuração.
 
 O deployment padrão inicia:
 
@@ -222,16 +230,36 @@ docker compose --profile selenium-all up -d --build
 Não configure `BROWSER_SELENIUM_REMOTE_URL` se o profile não estiver ativo; assim a API não anuncia
 combinações sem worker disponível.
 
+Para usar artefatos S3, crie também `secrets/aws_access_key_id` e `secrets/aws_secret_access_key`,
+selecione `ARTIFACT_BACKEND=s3` no `.env` e aplique o overlay:
+
+```bash
+cp secrets/aws_access_key_id.example secrets/aws_access_key_id
+cp secrets/aws_secret_access_key.example secrets/aws_secret_access_key
+chmod 600 secrets/aws_access_key_id secrets/aws_secret_access_key
+# Substitua os placeholders pelos valores reais.
+docker compose -f compose.yaml -f compose.s3.yaml up -d --build
+```
+
+Em uma VPS com suporte a IAM de workload, prefira não criar chaves AWS estáticas e não aplique o
+overlay de credenciais.
+
 ## Segurança operacional
 
 - mantenha a API atrás do proxy da VPS e não publique Redis, PostgreSQL ou Selenium Grid;
 - use chaves aleatórias com pelo menos 32 caracteres;
+- não coloque chaves em `.env`; use os arquivos ignorados em `SECRETS_DIR`;
 - preencha `ALLOWED_HOSTS` apenas para destinos privados deliberadamente acessíveis;
-- os containers removem capabilities e usam `no-new-privileges`;
+- os containers removem capabilities, usam `no-new-privileges` e desabilitam core dumps;
 - navegadores são efêmeros e não recebem perfis persistentes;
 - `whatsapp-web.js` com sessão persistente deve continuar no serviço proprietário;
 - artefatos expiram por padrão após 168 horas;
 - use um collector OTLP ao definir `OTEL_EXPORTER_OTLP_ENDPOINT`.
+
+No Docker Compose sem Swarm, secrets com origem `file:` são montagens de arquivo protegidas contra
+exposição por variável de ambiente, mas continuam armazenadas no host. Restrinja o acesso ao
+diretório, ao daemon Docker e ao usuário `root`. Enquanto uma credencial estiver em uso, ela ainda
+pode existir transitoriamente na memória do processo.
 
 ## Migração dos consumidores
 

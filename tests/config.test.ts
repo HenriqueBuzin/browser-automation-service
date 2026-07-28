@@ -1,15 +1,20 @@
-import { describe, expect, it } from "vitest";
+import { createHash } from "node:crypto";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { describe, expect, it, vi } from "vitest";
 import { loadConfig } from "../src/config.js";
 
 const apiKey = "a".repeat(32);
+const apiKeyHash = createHash("sha256").update(apiKey).digest("hex");
 
 describe("loadConfig", () => {
-  it("loads safe defaults", () => {
+  it("loads safe defaults and retains only the bootstrap key hash", () => {
     const config = loadConfig({ API_KEY: apiKey });
     expect(config).toMatchObject({
-      apiKey,
       appRole: "api",
       artifactRetentionMs: 604_800_000,
+      bootstrapApiKeyHash: apiKeyHash,
       maxActiveJobsPerClient: 10,
       port: 3000,
       seleniumBrowsers: ["chromium"],
@@ -19,9 +24,100 @@ describe("loadConfig", () => {
     expect(config.publicBaseUrl).toBe("http://localhost:3000");
   });
 
-  it("rejects missing or weak secrets", () => {
-    expect(() => loadConfig({})).toThrow("API_KEY is required");
+  it("requires a strong bootstrap key only for the API role", () => {
+    expect(() => loadConfig({})).toThrow("API_KEY or API_KEY_FILE is required");
     expect(() => loadConfig({ API_KEY: "weak" })).toThrow("at least 32");
+    expect(loadConfig({ APP_ROLE: "dispatcher" }).bootstrapApiKeyHash).toBeUndefined();
+  });
+
+  it("loads Docker secret files, trims their newlines and wipes source buffers", () => {
+    const values = new Map([
+      ["/run/secrets/api_key", Buffer.from(` ${apiKey}\n`)],
+      ["/run/secrets/database_url", Buffer.from("postgres://secret-db\n")],
+      ["/run/secrets/redis_password", Buffer.from("p@ss word\n")],
+      ["/run/secrets/aws_access_key_id", Buffer.from("access\n")],
+      ["/run/secrets/aws_secret_access_key", Buffer.from("secret\n")],
+    ]);
+    const readSecret = vi.fn((path: string) => {
+      const value = values.get(path);
+      if (!value) throw new Error("missing");
+      return value;
+    });
+
+    const config = loadConfig(
+      {
+        API_KEY_FILE: "/run/secrets/api_key",
+        ARTIFACT_BACKEND: "s3",
+        AWS_ACCESS_KEY_ID_FILE: "/run/secrets/aws_access_key_id",
+        AWS_SECRET_ACCESS_KEY_FILE: "/run/secrets/aws_secret_access_key",
+        DATABASE_URL_FILE: "/run/secrets/database_url",
+        REDIS_PASSWORD_FILE: "/run/secrets/redis_password",
+      },
+      readSecret,
+    );
+
+    expect(config).toMatchObject({
+      awsAccessKeyId: "access",
+      awsSecretAccessKey: "secret",
+      bootstrapApiKeyHash: apiKeyHash,
+      databaseUrl: "postgres://secret-db",
+      redisUrl: "redis://:p%40ss%20word@redis:6379/0",
+    });
+    expect(readSecret).toHaveBeenCalledTimes(5);
+    for (const value of values.values()) {
+      expect(value.every((byte) => byte === 0)).toBe(true);
+    }
+  });
+
+  it("uses the filesystem reader by default", () => {
+    const directory = mkdtempSync(join(tmpdir(), "browser-automation-secrets-"));
+    const path = join(directory, "api_key");
+    try {
+      writeFileSync(path, `${apiKey}\n`, { mode: 0o600 });
+      expect(loadConfig({ API_KEY_FILE: path }).bootstrapApiKeyHash).toBe(apiKeyHash);
+    } finally {
+      rmSync(directory, { force: true, recursive: true });
+    }
+  });
+
+  it("rejects ambiguous, empty or unreadable secret files", () => {
+    expect(() =>
+      loadConfig({ API_KEY: apiKey, API_KEY_FILE: "/secret" }, () => Buffer.from(apiKey)),
+    ).toThrow("mutually exclusive");
+    expect(() =>
+      loadConfig({ API_KEY_FILE: "/missing" }, () => {
+        throw new Error("denied");
+      }),
+    ).toThrow("Unable to read API_KEY_FILE '/missing'");
+    const empty = Buffer.from(" \n");
+    expect(() => loadConfig({ API_KEY_FILE: "/empty" }, () => empty)).toThrow("is empty");
+    expect(empty.every((byte) => byte === 0)).toBe(true);
+    expect(() =>
+      loadConfig(
+        {
+          APP_ROLE: "dispatcher",
+          DATABASE_URL: "postgres://direct",
+          DATABASE_URL_FILE: "/database",
+        },
+        () => Buffer.from("postgres://file"),
+      ),
+    ).toThrow("DATABASE_URL and DATABASE_URL_FILE are mutually exclusive");
+  });
+
+  it("validates related credential combinations", () => {
+    expect(() => loadConfig({ API_KEY: apiKey, AWS_ACCESS_KEY_ID: "access" })).toThrow(
+      "configured together",
+    );
+    expect(() => loadConfig({ API_KEY: apiKey, AWS_SECRET_ACCESS_KEY: "secret" })).toThrow(
+      "configured together",
+    );
+    expect(() =>
+      loadConfig({
+        API_KEY: apiKey,
+        REDIS_PASSWORD: "password",
+        REDIS_URL: "redis://custom",
+      }),
+    ).toThrow("mutually exclusive");
   });
 
   it("rejects invalid numeric and public URL configuration", () => {
@@ -51,11 +147,12 @@ describe("loadConfig", () => {
     expect(
       loadConfig({
         ALLOWED_HOSTS: " Example.COM,*.Internal.test,example.com, ",
-        API_KEY: ` ${apiKey} `,
         APP_ROLE: "worker",
         ARTIFACT_BACKEND: "s3",
         ARTIFACT_RETENTION_HOURS: "24",
         ARTIFACT_ROOT: " C:\\artifacts ",
+        AWS_ACCESS_KEY_ID: " access ",
+        AWS_SECRET_ACCESS_KEY: " secret ",
         DATABASE_URL: " postgres://custom ",
         DISPATCHER_INTERVAL_MS: "100",
         HOST: "127.0.0.1",
@@ -78,11 +175,13 @@ describe("loadConfig", () => {
       }),
     ).toMatchObject({
       allowedHosts: ["example.com", "*.internal.test"],
-      apiKey,
       appRole: "worker",
       artifactBackend: "s3",
       artifactRetentionMs: 86_400_000,
       artifactRoot: "C:\\artifacts",
+      awsAccessKeyId: "access",
+      awsSecretAccessKey: "secret",
+      bootstrapApiKeyHash: undefined,
       databaseUrl: "postgres://custom",
       dispatcherIntervalMs: 100,
       host: "127.0.0.1",
@@ -107,19 +206,15 @@ describe("loadConfig", () => {
 
   it("validates roles, drivers, worker capacity and booleans", () => {
     expect(() => loadConfig({ API_KEY: apiKey, APP_ROLE: "invalid" })).toThrow("APP_ROLE");
-    expect(() => loadConfig({ API_KEY: apiKey, APP_ROLE: "worker" })).toThrow(
-      "WORKER_DRIVER is required",
-    );
+    expect(() => loadConfig({ APP_ROLE: "worker" })).toThrow("WORKER_DRIVER is required");
     expect(() =>
       loadConfig({
-        API_KEY: apiKey,
         APP_ROLE: "worker",
         WORKER_DRIVER: "invalid",
       }),
     ).toThrow("WORKER_DRIVER");
     expect(() =>
       loadConfig({
-        API_KEY: apiKey,
         APP_ROLE: "worker",
         WORKER_CAPACITY_UNITS: "1",
         WORKER_DRIVER: "playwright",

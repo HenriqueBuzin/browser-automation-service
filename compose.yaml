@@ -1,15 +1,12 @@
 x-platform-environment: &platform-environment
-  API_KEY: ${API_KEY:?API_KEY is required}
-  DATABASE_URL: ${DATABASE_URL:?DATABASE_URL is required}
-  REDIS_URL: redis://:${REDIS_PASSWORD:?REDIS_PASSWORD is required}@redis:6379/0
+  DATABASE_URL_FILE: /run/secrets/database_url
+  REDIS_PASSWORD_FILE: /run/secrets/redis_password
   ARTIFACT_ROOT: /data/artifacts
   ARTIFACT_BACKEND: ${ARTIFACT_BACKEND:-local}
   S3_BUCKET: ${S3_BUCKET:-browser-artifacts}
   S3_REGION: ${S3_REGION:-us-east-1}
   S3_ENDPOINT: ${S3_ENDPOINT:-}
   S3_FORCE_PATH_STYLE: ${S3_FORCE_PATH_STYLE:-false}
-  AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
-  AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
   LOG_LEVEL: ${LOG_LEVEL:-info}
   OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
   ALLOWED_HOSTS: ${ALLOWED_HOSTS:-}
@@ -32,21 +29,41 @@ x-platform-service: &platform-service
     - no-new-privileges:true
   cap_drop:
     - ALL
+  secrets: &platform-secrets
+    - database_url
+    - redis_password
+  ulimits:
+    core:
+      soft: 0
+      hard: 0
 
 services:
   redis:
     image: redis:8.8.0-alpine
     restart: unless-stopped
-    environment:
-      REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD is required}
     command:
-      - sh
-      - -c
-      - exec redis-server --appendonly yes --requirepass "$${REDIS_PASSWORD}"
+      - /bin/sh
+      - -ceu
+      - |
+        umask 077
+        printf 'appendonly yes\nrequirepass %s\n' "$$(cat /run/secrets/redis_password)" > /run/redis-config/redis.conf
+        exec redis-server /run/redis-config/redis.conf
+    secrets:
+      - redis_password
+    tmpfs:
+      - /run/redis-config:mode=0700
+    ulimits:
+      core:
+        soft: 0
+        hard: 0
     volumes:
       - redis-data:/data
     healthcheck:
-      test: ["CMD-SHELL", 'redis-cli -a "$$REDIS_PASSWORD" ping | grep PONG']
+      test:
+        [
+          "CMD-SHELL",
+          'REDISCLI_AUTH="$$(cat /run/secrets/redis_password)" redis-cli ping | grep PONG',
+        ]
       interval: 5s
       timeout: 3s
       retries: 20
@@ -61,6 +78,7 @@ services:
     image: browser-automation-control:2.0.0
     environment:
       <<: *platform-environment
+      API_KEY_FILE: /run/secrets/api_key
       APP_ROLE: api
       HOST: 0.0.0.0
       PORT: 3000
@@ -79,6 +97,10 @@ services:
           - browser-automation-api
     volumes:
       - artifacts:/data/artifacts:ro
+    secrets:
+      - database_url
+      - redis_password
+      - api_key
     healthcheck:
       test: ["CMD", "node", "dist/healthcheck.js"]
       interval: 10s
@@ -161,6 +183,8 @@ services:
     expose: ["4442", "4443", "4444"]
     networks: [browser-automation-internal]
     security_opt: ["no-new-privileges:true"]
+    ulimits:
+      core: 0
 
   selenium-chromium:
     image: selenium/node-chromium:4.46.0
@@ -178,6 +202,8 @@ services:
       - browser-automation-internal
       - browser-automation-network
     security_opt: ["no-new-privileges:true"]
+    ulimits:
+      core: 0
 
   selenium-firefox:
     image: selenium/node-firefox:4.46.0
@@ -190,6 +216,8 @@ services:
       - browser-automation-internal
       - browser-automation-network
     security_opt: ["no-new-privileges:true"]
+    ulimits:
+      core: 0
 
   selenium-edge:
     image: selenium/node-edge:4.46.0
@@ -202,6 +230,8 @@ services:
       - browser-automation-internal
       - browser-automation-network
     security_opt: ["no-new-privileges:true"]
+    ulimits:
+      core: 0
 
 volumes:
   artifacts:
@@ -219,3 +249,11 @@ networks:
   proxy-network:
     external: true
     name: ${PROXY_NETWORK:-proxy-network}
+
+secrets:
+  api_key:
+    file: ${SECRETS_DIR:-./secrets}/api_key
+  database_url:
+    file: ${SECRETS_DIR:-./secrets}/database_url
+  redis_password:
+    file: ${SECRETS_DIR:-./secrets}/redis_password

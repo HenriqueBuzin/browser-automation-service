@@ -29,7 +29,7 @@ export class PostgresApiKeyAuthenticator implements Authenticator {
   }
 }
 
-export async function ensureBootstrapClient(pool: Pool, apiKey: string): Promise<void> {
+export async function ensureBootstrapClient(pool: Pool, apiKeyHash: string): Promise<void> {
   await pool.query(
     `INSERT INTO browser_api_clients
      (id, name, key_hash, scopes, active, created_at)
@@ -38,7 +38,7 @@ export async function ensureBootstrapClient(pool: Pool, apiKey: string): Promise
      DO UPDATE SET key_hash = EXCLUDED.key_hash, scopes = EXCLUDED.scopes, active = true`,
     [
       randomUUID(),
-      hashKey(apiKey),
+      apiKeyHash,
       ["jobs:read", "jobs:write", "artifacts:read", "capabilities:read", "metrics:read"],
     ],
   );

@@ -112,6 +112,7 @@ describe("hardening primitives", () => {
     expect(new S3ArtifactStore("bucket")).toBeInstanceOf(S3ArtifactStore);
     expect(
       new S3ArtifactStore("bucket", {
+        credentials: { accessKeyId: "access", secretAccessKey: "secret" },
         endpoint: "http://minio",
         forcePathStyle: false,
         region: "us-east-1",

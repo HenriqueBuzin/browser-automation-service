@@ -1,0 +1,57 @@
+services:
+  api:
+    environment:
+      AWS_ACCESS_KEY_ID_FILE: /run/secrets/aws_access_key_id
+      AWS_SECRET_ACCESS_KEY_FILE: /run/secrets/aws_secret_access_key
+    secrets:
+      - database_url
+      - redis_password
+      - api_key
+      - aws_access_key_id
+      - aws_secret_access_key
+
+  dispatcher:
+    environment:
+      AWS_ACCESS_KEY_ID_FILE: /run/secrets/aws_access_key_id
+      AWS_SECRET_ACCESS_KEY_FILE: /run/secrets/aws_secret_access_key
+    secrets:
+      - database_url
+      - redis_password
+      - aws_access_key_id
+      - aws_secret_access_key
+
+  worker-playwright:
+    environment:
+      AWS_ACCESS_KEY_ID_FILE: /run/secrets/aws_access_key_id
+      AWS_SECRET_ACCESS_KEY_FILE: /run/secrets/aws_secret_access_key
+    secrets:
+      - database_url
+      - redis_password
+      - aws_access_key_id
+      - aws_secret_access_key
+
+  worker-puppeteer:
+    environment:
+      AWS_ACCESS_KEY_ID_FILE: /run/secrets/aws_access_key_id
+      AWS_SECRET_ACCESS_KEY_FILE: /run/secrets/aws_secret_access_key
+    secrets:
+      - database_url
+      - redis_password
+      - aws_access_key_id
+      - aws_secret_access_key
+
+  worker-selenium:
+    environment:
+      AWS_ACCESS_KEY_ID_FILE: /run/secrets/aws_access_key_id
+      AWS_SECRET_ACCESS_KEY_FILE: /run/secrets/aws_secret_access_key
+    secrets:
+      - database_url
+      - redis_password
+      - aws_access_key_id
+      - aws_secret_access_key
+
+secrets:
+  aws_access_key_id:
+    file: ${SECRETS_DIR:-./secrets}/aws_access_key_id
+  aws_secret_access_key:
+    file: ${SECRETS_DIR:-./secrets}/aws_secret_access_key

@@ -55,6 +55,14 @@ export async function startPlatform(
   const artifacts =
     config.artifactBackend === "s3"
       ? new S3ArtifactStore(config.s3Bucket, {
+          ...(config.awsAccessKeyId && config.awsSecretAccessKey
+            ? {
+                credentials: {
+                  accessKeyId: config.awsAccessKeyId,
+                  secretAccessKey: config.awsSecretAccessKey,
+                },
+              }
+            : {}),
           ...(config.s3Endpoint ? { endpoint: config.s3Endpoint } : {}),
           forcePathStyle: config.s3ForcePathStyle,
           region: config.s3Region,
@@ -62,7 +70,9 @@ export async function startPlatform(
       : new LocalArtifactStore(config.artifactRoot);
 
   if (config.appRole === "api") {
-    await ensureBootstrapClient(pool, config.apiKey);
+    const bootstrapApiKeyHash = config.bootstrapApiKeyHash;
+    if (!bootstrapApiKeyHash) throw new Error("API bootstrap key hash is required");
+    await ensureBootstrapClient(pool, bootstrapApiKeyHash);
     const compiler = new JobCompiler(capabilityManifests(config));
     const submitJob = new SubmitJob(
       compiler,
