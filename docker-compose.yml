@@ -1,6 +1,9 @@
+name: browser-automation-service-dev
+
 x-platform-environment: &platform-environment
+  TZ: America/Sao_Paulo
   DATABASE_URL_FILE: /run/secrets/database_url
-  REDIS_PASSWORD_FILE: /run/secrets/redis_password
+  REDIS_URL_FILE: /run/secrets/redis_url
   ARTIFACT_ROOT: /data/artifacts
   ARTIFACT_BACKEND: ${ARTIFACT_BACKEND:-local}
   S3_BUCKET: ${S3_BUCKET:-browser-artifacts}
@@ -16,66 +19,42 @@ x-platform-environment: &platform-environment
   SELENIUM_BROWSERS: ${SELENIUM_BROWSERS:-chromium}
 
 x-platform-service: &platform-service
+  labels:
+    infra.project: browser-automation-service
+    infra.environment: development
+    infra.version: ${IMAGE_TAG:-local}
   restart: unless-stopped
   init: true
+  stop_grace_period: 30s
   environment: *platform-environment
-  depends_on:
-    redis:
-      condition: service_healthy
   networks:
     - browser-automation-internal
     - postgres-network
+    - redis-network
   security_opt:
     - no-new-privileges:true
   cap_drop:
     - ALL
   secrets: &platform-secrets
     - database_url
-    - redis_password
+    - redis_url
   ulimits:
     core:
       soft: 0
       hard: 0
+  logging:
+    driver: json-file
+    options:
+      max-size: "10m"
+      max-file: "3"
 
 services:
-  redis:
-    image: redis:8.8.0-alpine
-    restart: unless-stopped
-    command:
-      - /bin/sh
-      - -ceu
-      - |
-        umask 077
-        printf 'appendonly yes\nrequirepass %s\n' "$$(cat /run/secrets/redis_password)" > /run/redis-config/redis.conf
-        exec redis-server /run/redis-config/redis.conf
-    secrets:
-      - redis_password
-    tmpfs:
-      - /run/redis-config:mode=0700
-    ulimits:
-      core:
-        soft: 0
-        hard: 0
-    volumes:
-      - redis-data:/data
-    healthcheck:
-      test:
-        [
-          "CMD-SHELL",
-          'REDISCLI_AUTH="$$(cat /run/secrets/redis_password)" redis-cli ping | grep PONG',
-        ]
-      interval: 5s
-      timeout: 3s
-      retries: 20
-    networks:
-      - browser-automation-internal
-
-  api:
+  backend:
     <<: *platform-service
     build:
       context: .
       target: control
-    image: browser-automation-control:2.0.0
+    image: browser-automation-control:${IMAGE_TAG:-local}
     environment:
       <<: *platform-environment
       API_KEY_FILE: /run/secrets/api_key
@@ -89,6 +68,7 @@ services:
     networks:
       browser-automation-internal:
       postgres-network:
+      redis-network:
       proxy-network:
         aliases:
           - browser-automation-api
@@ -99,7 +79,7 @@ services:
       - artifacts:/data/artifacts:ro
     secrets:
       - database_url
-      - redis_password
+      - redis_url
       - api_key
     healthcheck:
       test: ["CMD", "node", "dist/healthcheck.js"]
@@ -109,7 +89,7 @@ services:
 
   dispatcher:
     <<: *platform-service
-    image: browser-automation-control:2.0.0
+    image: browser-automation-control:${IMAGE_TAG:-local}
     environment:
       <<: *platform-environment
       APP_ROLE: dispatcher
@@ -121,7 +101,7 @@ services:
     build:
       context: .
       target: browser-worker
-    image: browser-automation-browser-worker:2.0.0
+    image: browser-automation-browser-worker:${IMAGE_TAG:-local}
     environment:
       <<: *platform-environment
       APP_ROLE: worker
@@ -134,11 +114,12 @@ services:
     networks:
       - browser-automation-internal
       - postgres-network
+      - redis-network
       - browser-automation-network
 
   worker-puppeteer:
     <<: *platform-service
-    image: browser-automation-browser-worker:2.0.0
+    image: browser-automation-browser-worker:${IMAGE_TAG:-local}
     environment:
       <<: *platform-environment
       APP_ROLE: worker
@@ -151,15 +132,13 @@ services:
     networks:
       - browser-automation-internal
       - postgres-network
+      - redis-network
       - browser-automation-network
 
   worker-selenium:
     <<: *platform-service
-    profiles: ["selenium-all"]
-    image: browser-automation-control:2.0.0
+    image: browser-automation-control:${IMAGE_TAG:-local}
     depends_on:
-      redis:
-        condition: service_healthy
       selenium-hub:
         condition: service_started
     environment:
@@ -175,12 +154,14 @@ services:
     networks:
       - browser-automation-internal
       - postgres-network
+      - redis-network
 
   selenium-hub:
     image: selenium/hub:4.46.0
-    profiles: ["selenium-all"]
     restart: unless-stopped
     expose: ["4442", "4443", "4444"]
+    environment:
+      TZ: America/Sao_Paulo
     networks: [browser-automation-internal]
     security_opt: ["no-new-privileges:true"]
     ulimits:
@@ -188,11 +169,11 @@ services:
 
   selenium-chromium:
     image: selenium/node-chromium:4.46.0
-    profiles: ["selenium-all"]
     restart: unless-stopped
     depends_on: [selenium-hub]
     shm_size: "1gb"
     environment: &selenium-node-environment
+      TZ: America/Sao_Paulo
       SE_EVENT_BUS_HOST: selenium-hub
       SE_EVENT_BUS_PUBLISH_PORT: "4442"
       SE_EVENT_BUS_SUBSCRIBE_PORT: "4443"
@@ -207,7 +188,6 @@ services:
 
   selenium-firefox:
     image: selenium/node-firefox:4.46.0
-    profiles: ["selenium-all"]
     restart: unless-stopped
     depends_on: [selenium-hub]
     shm_size: "1gb"
@@ -221,7 +201,6 @@ services:
 
   selenium-edge:
     image: selenium/node-edge:4.46.0
-    profiles: ["selenium-all"]
     restart: unless-stopped
     depends_on: [selenium-hub]
     shm_size: "1gb"
@@ -235,7 +214,6 @@ services:
 
 volumes:
   artifacts:
-  redis-data:
 
 networks:
   browser-automation-internal:
@@ -246,6 +224,9 @@ networks:
   postgres-network:
     external: true
     name: ${POSTGRES_NETWORK:-postgres-network}
+  redis-network:
+    external: true
+    name: ${REDIS_NETWORK:-redis-network}
   proxy-network:
     external: true
     name: ${PROXY_NETWORK:-proxy-network}
@@ -255,5 +236,5 @@ secrets:
     environment: API_KEY
   database_url:
     environment: DATABASE_URL
-  redis_password:
-    environment: REDIS_PASSWORD
+  redis_url:
+    environment: REDIS_URL

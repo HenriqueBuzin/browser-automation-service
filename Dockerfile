@@ -1,6 +1,7 @@
 FROM node:24.18.0-bookworm AS build
 
-ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
+ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 \
+    TZ=America/Sao_Paulo
 WORKDIR /app
 
 COPY package.json package-lock.json ./
@@ -13,7 +14,8 @@ RUN npm run build
 FROM node:24.18.0-bookworm-slim AS control
 
 ENV NODE_ENV=production \
-    PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
+    PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 \
+    TZ=America/Sao_Paulo
 WORKDIR /app
 
 COPY package.json package-lock.json ./
@@ -28,6 +30,7 @@ CMD ["node", "dist/main.js"]
 FROM node:24.18.0-bookworm AS browser-worker
 
 ENV NODE_ENV=production \
+    TZ=America/Sao_Paulo \
     PLAYWRIGHT_BROWSERS_PATH=/ms-playwright \
     PUPPETEER_FIREFOX_EXECUTABLE_PATH=/usr/local/bin/puppeteer-firefox
 

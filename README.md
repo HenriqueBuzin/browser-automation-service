@@ -36,8 +36,9 @@ adiciona Chromium, Firefox e Edge, totalizando oito.
 - bloqueio de SSRF para destinos privados, com allowlist explícita;
 - cobertura obrigatória de 100% em linhas, branches, statements e funções.
 
-O Redis do NSC Bot pode ser reaproveitado somente com credencial, database/prefixo e SLA isolados. O
-Compose fornece Redis próprio por padrão. Keycloak não foi colocado no caminho crítico da rede
+O Redis é externo na VPS e chega por `REDIS_URL` e `REDIS_NETWORK`, com
+credencial, database/prefixo e SLA isolados. O Compose não cria Redis. Keycloak
+não foi colocado no caminho crítico da rede
 interna: a porta `Authenticator` permite adicioná-lo quando houver múltiplos tenants, acesso externo
 ou necessidade de OAuth2 client credentials.
 
@@ -202,15 +203,16 @@ O deployment padrão inicia:
 - worker Playwright;
 - worker Puppeteer.
 
-A API entra nas redes externas `proxy-network`, `postgres-network` e `browser-automation-network`.
-Dispatcher e workers entram na rede do PostgreSQL; somente API e processos que realmente abrem
-páginas entram na rede dos consumidores.
+A API entra nas redes externas `proxy-network`, `postgres-network`,
+`redis-network` e `browser-automation-network`. Backend, dispatcher e workers
+entram nas redes externas necessárias; somente backend e processos que realmente
+abrem páginas entram na rede dos consumidores.
 
 Um consumidor Docker conecta somente à rede de automação:
 
 ```yaml
 services:
-  app:
+  backend:
     networks:
       - default
       - browser-automation-network
@@ -224,24 +226,25 @@ networks:
 Dentro dessa rede, a URL estável da API é `http://browser-automation-api:3000`. Consumidores nunca
 entram na `postgres-network`.
 
-A API é publicada somente em `127.0.0.1`. Para habilitar Selenium:
+A API é publicada somente em `127.0.0.1`. Selenium faz parte da stack padrão;
+para anunciá-lo na API, configure:
 
 ```bash
 cat >> .env <<'EOF'
 BROWSER_SELENIUM_REMOTE_URL=http://selenium-hub:4444/wd/hub
 SELENIUM_BROWSERS=chromium,firefox,edge
 EOF
-docker compose --profile selenium-all up -d --build
+docker compose -f docker-compose.yml up -d --build
 ```
 
-Não configure `BROWSER_SELENIUM_REMOTE_URL` se o profile não estiver ativo; assim a API não anuncia
-combinações sem worker disponível.
+Os serviços Selenium e o worker correspondente sobem sem profile. A API só
+anuncia essas combinações quando `BROWSER_SELENIUM_REMOTE_URL` estiver definido.
 
 Para usar artefatos S3, preencha `AWS_ACCESS_KEY_ID` e `AWS_SECRET_ACCESS_KEY`, selecione
 `ARTIFACT_BACKEND=s3` no `.env` e aplique o overlay:
 
 ```bash
-docker compose -f compose.yaml -f compose.s3.yaml up -d --build
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
 ```
 
 Em uma VPS com suporte a IAM de workload, prefira não criar chaves AWS estáticas e não aplique o

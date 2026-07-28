@@ -2,24 +2,60 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, dev]
   pull_request:
+    branches: [main, dev]
 
 permissions:
   contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   validate:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-node@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: 24
           cache: npm
       - run: npm ci
       - run: npm run check
       - run: docker build --target control --tag browser-automation-control:test .
-      - run: docker build --target browser-worker --tag browser-automation-worker:test .
-      - run: docker compose config --quiet
+      - run: docker build --target browser-worker --tag browser-automation-browser-worker:test .
+      - name: Validate Compose
+        env:
+          API_KEY: ci-api-key
+          DATABASE_URL: postgresql://ci:ci@postgres/ci
+          REDIS_URL: redis://:ci-redis-password@redis:6379/0
+          AWS_ACCESS_KEY_ID: ci-access-key
+          AWS_SECRET_ACCESS_KEY: ci-secret-key
+        run: |
+          docker compose -f docker-compose.yml config --quiet
+          docker compose -f docker-compose.yml -f docker-compose.prod.yml config --quiet
+      - name: Generate SBOM
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0
+        with:
+          image: browser-automation-control:test
+          artifact-name: browser-automation-control.spdx.json
+      - name: Scan container
+        uses: anchore/scan-action@e1165082ffb1fe366ebaf02d8526e7c4989ea9d2 # v7.4.0
+        with:
+          image: browser-automation-control:test
+          fail-build: true
+          severity-cutoff: high
+      - name: Generate worker SBOM
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0
+        with:
+          image: browser-automation-browser-worker:test
+          artifact-name: browser-automation-browser-worker.spdx.json
+      - name: Scan worker container
+        uses: anchore/scan-action@e1165082ffb1fe366ebaf02d8526e7c4989ea9d2 # v7.4.0
+        with:
+          image: browser-automation-browser-worker:test
+          fail-build: true
+          severity-cutoff: high
