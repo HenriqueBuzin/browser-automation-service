@@ -252,8 +252,8 @@ networks:
 
 secrets:
   api_key:
-    file: ${SECRETS_DIR:-./secrets}/api_key
+    environment: API_KEY
   database_url:
-    file: ${SECRETS_DIR:-./secrets}/database_url
+    environment: DATABASE_URL
   redis_password:
-    file: ${SECRETS_DIR:-./secrets}/redis_password
+    environment: REDIS_PASSWORD

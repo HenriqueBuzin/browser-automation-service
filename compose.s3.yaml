@@ -52,6 +52,6 @@ services:
 
 secrets:
   aws_access_key_id:
-    file: ${SECRETS_DIR:-./secrets}/aws_access_key_id
+    environment: AWS_ACCESS_KEY_ID
   aws_secret_access_key:
-    file: ${SECRETS_DIR:-./secrets}/aws_secret_access_key
+    environment: AWS_SECRET_ACCESS_KEY

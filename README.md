@@ -158,7 +158,7 @@ npx.cmd playwright install chromium firefox webkit
 
 O deployment usa o PostgreSQL compartilhado da VPS pela rede externa `postgres-network`. Antes do
 primeiro start, crie o usuário e o banco `browser_automation` no PostgreSQL central e confirme que o
-hostname registrado em `secrets/database_url` resolve nessa rede.
+hostname registrado em `DATABASE_URL` resolve nessa rede.
 
 Crie uma vez as redes externas da VPS:
 
@@ -168,24 +168,31 @@ docker network inspect postgres-network >/dev/null 2>&1 || docker network create
 docker network inspect browser-automation-network >/dev/null 2>&1 || docker network create browser-automation-network
 ```
 
-Crie o arquivo de ambiente apenas para configurações não secretas e prepare os Docker Secrets:
+O Jenkins mantém o `.env` fora do repositório e cria um link simbólico no checkout. O Compose lê as
+variáveis sensíveis desse arquivo, transforma cada uma em um Docker Secret e monta somente o arquivo
+correspondente em `/run/secrets`:
 
 ```bash
-cp .env.example .env
-install -d -m 700 secrets
-openssl rand -hex 32 > secrets/api_key
-openssl rand -hex 32 > secrets/redis_password
-cp secrets/database_url.example secrets/database_url
-chmod 600 secrets/api_key secrets/redis_password secrets/database_url
-# Edite secrets/database_url e use a URL real do PostgreSQL central.
+ln -sfn /root/envs/browser-automation-service.env .env
+chmod 600 /root/envs/browser-automation-service.env
 docker compose up -d --build
 docker compose ps
 ```
 
-Os arquivos sem sufixo `.example` são ignorados pelo Git. O Compose monta cada segredo somente nos
-serviços que precisam dele, em `/run/secrets`; a chave bootstrap da API não é entregue ao dispatcher
-nem aos workers. A aplicação aceita `*_FILE` e mantém somente o hash SHA-256 da chave bootstrap
-depois da inicialização da configuração.
+Na VPS, o fluxo recomendado é:
+
+```text
+/root/envs/browser-automation-service.env
+  -> link simbólico .env criado pelo Jenkins
+  -> secrets.environment do Docker Compose
+  -> /run/secrets/* dentro do container
+  -> configuração *_FILE lida pelo Node.js
+```
+
+O Compose monta cada segredo somente nos serviços que precisam dele. A chave bootstrap da API não é
+entregue ao dispatcher nem aos workers, e a aplicação mantém somente seu hash SHA-256 depois da
+inicialização da configuração. O `.env` continua contendo as credenciais em texto e deve permanecer
+fora do Git, legível apenas por `root` e pelo usuário de deployment.
 
 O deployment padrão inicia:
 
@@ -230,14 +237,10 @@ docker compose --profile selenium-all up -d --build
 Não configure `BROWSER_SELENIUM_REMOTE_URL` se o profile não estiver ativo; assim a API não anuncia
 combinações sem worker disponível.
 
-Para usar artefatos S3, crie também `secrets/aws_access_key_id` e `secrets/aws_secret_access_key`,
-selecione `ARTIFACT_BACKEND=s3` no `.env` e aplique o overlay:
+Para usar artefatos S3, preencha `AWS_ACCESS_KEY_ID` e `AWS_SECRET_ACCESS_KEY`, selecione
+`ARTIFACT_BACKEND=s3` no `.env` e aplique o overlay:
 
 ```bash
-cp secrets/aws_access_key_id.example secrets/aws_access_key_id
-cp secrets/aws_secret_access_key.example secrets/aws_secret_access_key
-chmod 600 secrets/aws_access_key_id secrets/aws_secret_access_key
-# Substitua os placeholders pelos valores reais.
 docker compose -f compose.yaml -f compose.s3.yaml up -d --build
 ```
 
@@ -248,7 +251,7 @@ overlay de credenciais.
 
 - mantenha a API atrás do proxy da VPS e não publique Redis, PostgreSQL ou Selenium Grid;
 - use chaves aleatórias com pelo menos 32 caracteres;
-- não coloque chaves em `.env`; use os arquivos ignorados em `SECRETS_DIR`;
+- mantenha o `.env` fora do repositório, com `chmod 600`, e não imprima seu conteúdo no Jenkins;
 - preencha `ALLOWED_HOSTS` apenas para destinos privados deliberadamente acessíveis;
 - os containers removem capabilities, usam `no-new-privileges` e desabilitam core dumps;
 - navegadores são efêmeros e não recebem perfis persistentes;
@@ -256,10 +259,10 @@ overlay de credenciais.
 - artefatos expiram por padrão após 168 horas;
 - use um collector OTLP ao definir `OTEL_EXPORTER_OTLP_ENDPOINT`.
 
-No Docker Compose sem Swarm, secrets com origem `file:` são montagens de arquivo protegidas contra
-exposição por variável de ambiente, mas continuam armazenadas no host. Restrinja o acesso ao
-diretório, ao daemon Docker e ao usuário `root`. Enquanto uma credencial estiver em uso, ela ainda
-pode existir transitoriamente na memória do processo.
+No Docker Compose sem Swarm, `secrets.environment` impede que a credencial seja encaminhada ao
+ambiente do container, mas não protege o `.env` da VPS nem o ambiente temporário do processo
+`docker compose`. Restrinja o arquivo, o Jenkins, o daemon Docker e o usuário `root`. Enquanto uma
+credencial estiver em uso, ela ainda pode existir transitoriamente na memória do processo.
 
 ## Migração dos consumidores
 
