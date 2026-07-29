@@ -6,7 +6,7 @@
 flowchart LR
     C["Serviços consumidores"] --> API["API Fastify"]
     API --> AUTH["API keys e escopos"]
-    API --> COMP["Compilador Automation Plan v1"]
+    API --> COMP["Compilador Automation Plan v2"]
     COMP --> PG[("PostgreSQL")]
     PG --> OUT["Outbox transacional"]
     DISP["Dispatcher"] --> OUT
@@ -34,6 +34,11 @@ O sistema é dividido em três papéis de processo:
 O control plane usa o artefato TypeScript selecionado por `APP_ROLE`. Cada adapter possui fila,
 processo, imagem, dependências, concorrência e escala independentes. Apenas adapters que publicam
 capacidades executáveis entram na matriz.
+
+O contrato de capacidade não confunde produto, navegador e protocolo. Cada anúncio informa:
+`adapter`, `executionMode`, `platform`, `browser`, `protocol` e `actions`. Os modos são
+`portable-plan`, para executar a DSL comum, e `native-suite`, para receber um pacote de testes do
+runner sem fingir equivalência semântica.
 
 ## Contrato e compilador
 

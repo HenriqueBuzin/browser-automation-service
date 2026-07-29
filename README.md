@@ -41,6 +41,16 @@ dependências ou vulnerabilidades transitivas:
 Somente adapters que responderem ao contrato de capacidades entram na matriz. Portanto, instalar ou
 atualizar um runner não altera a API nem os demais adapters.
 
+Cada capacidade anunciada identifica separadamente `adapter`, `executionMode`, `platform`,
+`browser`, `protocol` e `actions`. Assim, Cypress ou Nightwatch podem executar uma suíte nativa sem
+serem forçados a imitar uma sessão Playwright, enquanto os adapters portáteis compartilham a mesma
+DSL.
+
+O worker iOS fica preparado em `deploy/macos`: ele roda nativamente por `launchd`, usa
+`WORKER_ADAPTER=appium`, `ADAPTER_PLATFORM=ios` e conecta-se ao mesmo PostgreSQL, Redis e artifact
+store do control plane. Ele não é iniciado pelo Compose Linux e só anunciará capacidade quando um
+host macOS com Xcode, Appium e XCUITest estiver disponível.
+
 ## Arquitetura
 
 - Node.js 24 LTS e TypeScript estrito;

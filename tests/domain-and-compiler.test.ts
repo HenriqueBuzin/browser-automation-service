@@ -29,6 +29,15 @@ describe("contracts, compiler and state", () => {
     });
     expect(all).toHaveLength(8);
     expect(all.every((manifest) => manifest.actions === portableActions)).toBe(true);
+    expect(all).toContainEqual(
+      expect.objectContaining({
+        adapter: "puppeteer",
+        browser: "firefox",
+        executionMode: "portable-plan",
+        platform: "web",
+        protocol: "webdriver-bidi",
+      }),
+    );
   });
 
   it("expands defaults, one-axis filters and the requested Cartesian product", () => {
@@ -59,7 +68,14 @@ describe("contracts, compiler and state", () => {
 
   it("marks actions absent from a manifest as unsupported and blocks unsafe protocols", () => {
     const compiler = new JobCompiler([
-      { actions: ["goto"], browser: "chromium", adapter: "playwright" },
+      {
+        actions: ["goto"],
+        browser: "chromium",
+        executionMode: "portable-plan",
+        adapter: "playwright",
+        platform: "web",
+        protocol: "playwright",
+      },
     ]);
     expect(compiler.compile(jobDefinition({ steps: [{ action: "reload" }] }))).toEqual([
       {

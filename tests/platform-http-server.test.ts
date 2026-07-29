@@ -49,7 +49,14 @@ function dependencies() {
     authorize: vi.fn(async (credentials: { apiKey?: string }) => credentials.apiKey === "valid"),
   };
   const compiler = new JobCompiler([
-    { actions: ["goto"], browser: "chromium", adapter: "playwright" },
+    {
+      actions: ["goto"],
+      browser: "chromium",
+      executionMode: "portable-plan",
+      adapter: "playwright",
+      platform: "web",
+      protocol: "playwright",
+    },
   ]);
   return {
     artifactStore,
@@ -100,6 +107,11 @@ describe("platform HTTP API", () => {
     });
     expect(capabilities.statusCode).toBe(200);
     expect(capabilities.json().capabilities).toHaveLength(1);
+    expect(capabilities.json().capabilities[0]).toMatchObject({
+      executionMode: "portable-plan",
+      platform: "web",
+      protocol: "playwright",
+    });
   });
 
   it("enables structured request logging when configured", async () => {

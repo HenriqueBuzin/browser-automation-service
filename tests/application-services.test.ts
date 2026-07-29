@@ -56,8 +56,22 @@ function artifactStore(overrides: Partial<ArtifactStore> = {}): ArtifactStore {
 function service(repository: InMemoryJobRepository, maxActive = 10): SubmitJob {
   return new SubmitJob(
     new JobCompiler([
-      { actions: ["goto"], browser: "chromium", adapter: "playwright" },
-      { actions: [], browser: "firefox", adapter: "puppeteer" },
+      {
+        actions: ["goto"],
+        browser: "chromium",
+        executionMode: "portable-plan",
+        adapter: "playwright",
+        platform: "web",
+        protocol: "playwright",
+      },
+      {
+        actions: [],
+        browser: "firefox",
+        executionMode: "portable-plan",
+        adapter: "puppeteer",
+        platform: "web",
+        protocol: "webdriver-bidi",
+      },
     ]),
     new DestinationPolicy([], async () => [{ address: "8.8.8.8", family: 4 }]),
     repository,

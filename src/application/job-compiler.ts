@@ -4,6 +4,7 @@ import type {
   AutomationJob,
   AutomationStep,
 } from "../contracts/job-contract.js";
+import type { AdapterCapabilityManifest } from "../contracts/adapter-contract.js";
 
 export const portableActions: AutomationStep["action"][] = [
   "assert",
@@ -29,11 +30,7 @@ export const portableActions: AutomationStep["action"][] = [
   "waitForUrl",
 ];
 
-export type CapabilityManifest = {
-  actions: readonly AutomationStep["action"][];
-  browser: AutomationBrowser;
-  adapter: AutomationAdapter;
-};
+export type CapabilityManifest = AdapterCapabilityManifest;
 
 export type ExecutionPlan = {
   browser: AutomationBrowser;
