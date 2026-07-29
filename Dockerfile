@@ -26,7 +26,9 @@ WORKDIR /app
 
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev \
-    && npm cache clean --force
+    && npm cache clean --force \
+    && rm -rf /usr/local/lib/node_modules/npm \
+    && rm -f /usr/local/bin/npm /usr/local/bin/npx
 RUN install -d -o node -g node /data/artifacts
 COPY --from=build /app/dist ./dist
 
@@ -51,7 +53,9 @@ RUN apt-get update \
     && npx --no-install playwright install --with-deps chromium firefox webkit \
     && firefox_path="$(npx --no-install @puppeteer/browsers install firefox@${PUPPETEER_FIREFOX_BUILD} --path /ms-puppeteer --format '{{path}}')" \
     && ln -s "${firefox_path}" "${PUPPETEER_FIREFOX_EXECUTABLE_PATH}" \
-    && npm cache clean --force
+    && npm cache clean --force \
+    && rm -rf /usr/local/lib/node_modules/npm \
+    && rm -f /usr/local/bin/npm /usr/local/bin/npx
 RUN install -d -o node -g node /data/artifacts
 
 COPY --from=build --chown=node:node /app/dist ./dist
