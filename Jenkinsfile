@@ -1,10 +1,6 @@
 pipeline {
     agent any
 
-    tools {
-        nodejs 'node-24'
-    }
-
     options {
         disableConcurrentBuilds()
         timeout(time: 45, unit: 'MINUTES')
@@ -13,13 +9,13 @@ pipeline {
     stages {
         stage('Install') {
             steps {
-                sh 'npm ci'
+                echo 'Dependencias Node/npm sao instaladas no build multi-stage.'
             }
         }
 
         stage('Verify') {
             steps {
-                sh 'npm run check'
+                sh 'docker build --target verify --tag browser-automation-service:verify .'
             }
         }
 

@@ -11,6 +11,12 @@ COPY tsconfig.json tsconfig.build.json ./
 COPY src ./src
 RUN npm run build
 
+FROM build AS verify
+
+COPY . ./
+
+RUN npm run check
+
 FROM node:24.18.0-bookworm-slim AS control
 
 ENV NODE_ENV=production \
