@@ -71,10 +71,10 @@ services:
       redis-network:
       proxy-network:
         aliases:
-          - browser-automation-api
+          - browser-automation-service-dev
       browser-automation-network:
         aliases:
-          - browser-automation-api
+          - browser-automation-service-dev
     volumes:
       - artifacts:/data/artifacts:ro
     secrets:
