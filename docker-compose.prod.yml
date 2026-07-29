@@ -18,8 +18,8 @@ services:
       AWS_ACCESS_KEY_ID_FILE: /run/secrets/aws_access_key_id
       AWS_SECRET_ACCESS_KEY_FILE: /run/secrets/aws_secret_access_key
     secrets:
-      - database_url
-      - redis_url
+      - postgres_password
+      - redis_password
       - api_key
       - aws_access_key_id
       - aws_secret_access_key
@@ -31,8 +31,8 @@ services:
       AWS_ACCESS_KEY_ID_FILE: /run/secrets/aws_access_key_id
       AWS_SECRET_ACCESS_KEY_FILE: /run/secrets/aws_secret_access_key
     secrets:
-      - database_url
-      - redis_url
+      - postgres_password
+      - redis_password
       - aws_access_key_id
       - aws_secret_access_key
 
@@ -43,8 +43,8 @@ services:
       AWS_ACCESS_KEY_ID_FILE: /run/secrets/aws_access_key_id
       AWS_SECRET_ACCESS_KEY_FILE: /run/secrets/aws_secret_access_key
     secrets:
-      - database_url
-      - redis_url
+      - postgres_password
+      - redis_password
       - aws_access_key_id
       - aws_secret_access_key
 
@@ -55,8 +55,8 @@ services:
       AWS_ACCESS_KEY_ID_FILE: /run/secrets/aws_access_key_id
       AWS_SECRET_ACCESS_KEY_FILE: /run/secrets/aws_secret_access_key
     secrets:
-      - database_url
-      - redis_url
+      - postgres_password
+      - redis_password
       - aws_access_key_id
       - aws_secret_access_key
 
@@ -67,8 +67,8 @@ services:
       AWS_ACCESS_KEY_ID_FILE: /run/secrets/aws_access_key_id
       AWS_SECRET_ACCESS_KEY_FILE: /run/secrets/aws_secret_access_key
     secrets:
-      - database_url
-      - redis_url
+      - postgres_password
+      - redis_password
       - aws_access_key_id
       - aws_secret_access_key
 

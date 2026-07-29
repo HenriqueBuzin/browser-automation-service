@@ -4,6 +4,10 @@ Cada aplicação depende da porta `AutomationAdapter`, não de Playwright, Puppe
 diretamente. O adapter remoto envia o plano para a API v2; o adapter local preserva a implementação
 atual durante a migração.
 
+Esse é o contrato padrão de todos os serviços da VPS: remoto primeiro, Playwright local como
+fallback. A plataforma pode ser instalada em outra VPS; basta trocar URL e API key do adaptador, sem
+alterar os testes declarativos.
+
 ## Seleção da matriz
 
 `drivers` e `browsers` são filtros opcionais. O cliente omite campos ausentes ou arrays vazios.

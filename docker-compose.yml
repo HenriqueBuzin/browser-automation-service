@@ -2,8 +2,16 @@ name: browser-automation-service-dev
 
 x-platform-environment: &platform-environment
   TZ: America/Sao_Paulo
-  DATABASE_URL_FILE: /run/secrets/database_url
-  REDIS_URL_FILE: /run/secrets/redis_url
+  POSTGRES_HOST: ${POSTGRES_HOST:-postgres}
+  POSTGRES_PORT: ${POSTGRES_PORT:-5432}
+  POSTGRES_DB: ${POSTGRES_DB:?Defina POSTGRES_DB}
+  POSTGRES_USER: ${POSTGRES_USER:?Defina POSTGRES_USER}
+  POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
+  REDIS_HOST: ${REDIS_HOST:-redis}
+  REDIS_PORT: ${REDIS_PORT:-6379}
+  REDIS_DB: ${REDIS_DB:-0}
+  REDIS_USER: ${REDIS_USER:-}
+  REDIS_PASSWORD_FILE: /run/secrets/redis_password
   ARTIFACT_ROOT: /data/artifacts
   ARTIFACT_BACKEND: ${ARTIFACT_BACKEND:-local}
   S3_BUCKET: ${S3_BUCKET:-browser-artifacts}
@@ -15,8 +23,6 @@ x-platform-environment: &platform-environment
   ALLOWED_HOSTS: ${ALLOWED_HOSTS:-}
   MAX_ACTIVE_JOBS_PER_CLIENT: ${MAX_ACTIVE_JOBS_PER_CLIENT:-10}
   ARTIFACT_RETENTION_HOURS: ${ARTIFACT_RETENTION_HOURS:-168}
-  BROWSER_SELENIUM_REMOTE_URL: ${BROWSER_SELENIUM_REMOTE_URL:-}
-  SELENIUM_BROWSERS: ${SELENIUM_BROWSERS:-chromium}
 
 x-platform-service: &platform-service
   labels:
@@ -36,8 +42,8 @@ x-platform-service: &platform-service
   cap_drop:
     - ALL
   secrets: &platform-secrets
-    - database_url
-    - redis_url
+    - postgres_password
+    - redis_password
   ulimits:
     core:
       soft: 0
@@ -59,9 +65,11 @@ services:
       <<: *platform-environment
       API_KEY_FILE: /run/secrets/api_key
       APP_ROLE: api
+      BROWSER_SELENIUM_REMOTE_URL: http://selenium-hub:4444/wd/hub
       HOST: 0.0.0.0
       PORT: 3000
       PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-http://localhost:3000}
+      SELENIUM_BROWSERS: chromium,firefox,edge
       SWAGGER_ENABLED: ${SWAGGER_ENABLED:-true}
     ports:
       - "127.0.0.1:${PORT:-3000}:3000"
@@ -78,8 +86,8 @@ services:
     volumes:
       - artifacts:/data/artifacts:ro
     secrets:
-      - database_url
-      - redis_url
+      - postgres_password
+      - redis_password
       - api_key
     healthcheck:
       test: ["CMD", "node", "dist/healthcheck.js"]
@@ -234,7 +242,7 @@ networks:
 secrets:
   api_key:
     environment: API_KEY
-  database_url:
-    environment: DATABASE_URL
-  redis_url:
-    environment: REDIS_URL
+  postgres_password:
+    environment: POSTGRES_PASSWORD
+  redis_password:
+    environment: REDIS_PASSWORD

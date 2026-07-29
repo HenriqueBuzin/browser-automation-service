@@ -91,9 +91,7 @@ export function loadConfig(
     awsAccessKeyId,
     awsSecretAccessKey,
     bootstrapApiKeyHash,
-    databaseUrl:
-      secretText(environment, "DATABASE_URL", readSecretFile) ??
-      "postgres://browser:browser@postgres:5432/browser_automation",
+    databaseUrl: postgresUrl(environment, readSecretFile),
     dispatcherIntervalMs: integer(
       "DISPATCHER_INTERVAL_MS",
       environment.DISPATCHER_INTERVAL_MS,
@@ -150,14 +148,69 @@ function readApiKeyHash(environment: NodeJS.ProcessEnv, readSecretFile: SecretFi
 
 function redisUrl(environment: NodeJS.ProcessEnv, readSecretFile: SecretFileReader): string {
   const url = secretText(environment, "REDIS_URL", readSecretFile);
-  const password = secretText(environment, "REDIS_PASSWORD", readSecretFile);
-  if (url && password) {
-    throw new Error("REDIS_URL and REDIS_PASSWORD are mutually exclusive");
+  const separatedNames = [
+    "REDIS_HOST",
+    "REDIS_PORT",
+    "REDIS_DB",
+    "REDIS_USER",
+    "REDIS_PASSWORD",
+    "REDIS_PASSWORD_FILE",
+  ] as const;
+  const usesSeparatedConfig = separatedNames.some((name) => optional(environment[name]));
+  if (url && usesSeparatedConfig) {
+    throw new Error("REDIS_URL and REDIS_* settings are mutually exclusive");
   }
-  return (
-    url ??
-    (password ? `redis://:${encodeURIComponent(password)}@redis:6379/0` : "redis://redis:6379/0")
-  );
+  if (url) return url;
+
+  const password = secretText(environment, "REDIS_PASSWORD", readSecretFile);
+  const host = text(environment.REDIS_HOST, "redis");
+  const port = integer("REDIS_PORT", environment.REDIS_PORT, 6_379, 1);
+  if (port > 65_535) throw new Error("REDIS_PORT must be less than or equal to 65535");
+  const database = integer("REDIS_DB", environment.REDIS_DB, 0, 0);
+  const user = optional(environment.REDIS_USER);
+  if (user && !password) {
+    throw new Error(
+      "REDIS_PASSWORD or REDIS_PASSWORD_FILE is required when REDIS_USER is configured",
+    );
+  }
+  let authentication = "";
+  if (user && password) {
+    authentication = `${encodeURIComponent(user)}:${encodeURIComponent(password)}@`;
+  } else if (password) {
+    authentication = `:${encodeURIComponent(password)}@`;
+  }
+  return `redis://${authentication}${host}:${String(port)}/${String(database)}`;
+}
+
+function postgresUrl(environment: NodeJS.ProcessEnv, readSecretFile: SecretFileReader): string {
+  const url = secretText(environment, "DATABASE_URL", readSecretFile);
+  const separatedNames = [
+    "POSTGRES_HOST",
+    "POSTGRES_PORT",
+    "POSTGRES_DB",
+    "POSTGRES_USER",
+    "POSTGRES_PASSWORD",
+    "POSTGRES_PASSWORD_FILE",
+  ] as const;
+  const usesSeparatedConfig = separatedNames.some((name) => optional(environment[name]));
+  if (url && usesSeparatedConfig) {
+    throw new Error("DATABASE_URL and POSTGRES_* settings are mutually exclusive");
+  }
+  if (url) return url;
+  if (!usesSeparatedConfig) {
+    return "postgres://browser:browser@postgres:5432/browser_automation";
+  }
+
+  const password = secretText(environment, "POSTGRES_PASSWORD", readSecretFile);
+  if (!password) {
+    throw new Error("POSTGRES_PASSWORD or POSTGRES_PASSWORD_FILE is required");
+  }
+  const host = text(environment.POSTGRES_HOST, "postgres");
+  const port = integer("POSTGRES_PORT", environment.POSTGRES_PORT, 5_432, 1);
+  if (port > 65_535) throw new Error("POSTGRES_PORT must be less than or equal to 65535");
+  const database = text(environment.POSTGRES_DB, "browser_automation");
+  const user = text(environment.POSTGRES_USER, "browser_automation");
+  return `postgresql://${encodeURIComponent(user)}:${encodeURIComponent(password)}@${host}:${String(port)}/${encodeURIComponent(database)}`;
 }
 
 function secretText(

@@ -30,8 +30,15 @@ jobs:
       - name: Validate Compose
         env:
           API_KEY: ci-api-key
-          DATABASE_URL: postgresql://ci:ci@postgres/ci
-          REDIS_URL: redis://:ci-redis-password@redis:6379/0
+          POSTGRES_HOST: postgres
+          POSTGRES_PORT: 5432
+          POSTGRES_DB: ci
+          POSTGRES_USER: ci
+          POSTGRES_PASSWORD: ci-password
+          REDIS_HOST: redis
+          REDIS_PORT: 6379
+          REDIS_DB: 0
+          REDIS_PASSWORD: ci-redis-password
           AWS_ACCESS_KEY_ID: ci-access-key
           AWS_SECRET_ACCESS_KEY: ci-secret-key
         run: |

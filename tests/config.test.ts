@@ -117,7 +117,67 @@ describe("loadConfig", () => {
         REDIS_PASSWORD: "password",
         REDIS_URL: "redis://custom",
       }),
-    ).toThrow("mutually exclusive");
+    ).toThrow("REDIS_URL and REDIS_* settings are mutually exclusive");
+    expect(() =>
+      loadConfig({
+        API_KEY: apiKey,
+        DATABASE_URL: "postgres://direct",
+        POSTGRES_USER: "browser",
+      }),
+    ).toThrow("DATABASE_URL and POSTGRES_* settings are mutually exclusive");
+  });
+
+  it("builds the Redis URL from separated env settings", () => {
+    expect(
+      loadConfig({
+        API_KEY: apiKey,
+        REDIS_DB: "2",
+        REDIS_HOST: "redis-vps",
+        REDIS_PASSWORD: "p@ss word",
+        REDIS_PORT: "6380",
+        REDIS_USER: "browser user",
+      }).redisUrl,
+    ).toBe("redis://browser%20user:p%40ss%20word@redis-vps:6380/2");
+    expect(() =>
+      loadConfig({
+        API_KEY: apiKey,
+        REDIS_PASSWORD: "secret",
+        REDIS_PORT: "65536",
+      }),
+    ).toThrow("REDIS_PORT must be less than or equal to 65535");
+    expect(() => loadConfig({ API_KEY: apiKey, REDIS_USER: "browser" })).toThrow(
+      "REDIS_PASSWORD or REDIS_PASSWORD_FILE is required",
+    );
+  });
+
+  it("builds the PostgreSQL URL from separated env settings and a password secret", () => {
+    const password = Buffer.from("p@ss word\n");
+    const config = loadConfig(
+      {
+        API_KEY: apiKey,
+        POSTGRES_DB: "browser tests",
+        POSTGRES_HOST: "postgres-vps",
+        POSTGRES_PASSWORD_FILE: "/run/secrets/postgres_password",
+        POSTGRES_PORT: "5433",
+        POSTGRES_USER: "browser user",
+      },
+      () => password,
+    );
+
+    expect(config.databaseUrl).toBe(
+      "postgresql://browser%20user:p%40ss%20word@postgres-vps:5433/browser%20tests",
+    );
+    expect(password.every((byte) => byte === 0)).toBe(true);
+    expect(() => loadConfig({ API_KEY: apiKey, POSTGRES_USER: "browser" })).toThrow(
+      "POSTGRES_PASSWORD or POSTGRES_PASSWORD_FILE is required",
+    );
+    expect(() =>
+      loadConfig({
+        API_KEY: apiKey,
+        POSTGRES_PASSWORD: "secret",
+        POSTGRES_PORT: "65536",
+      }),
+    ).toThrow("POSTGRES_PORT must be less than or equal to 65535");
   });
 
   it("rejects invalid numeric and public URL configuration", () => {

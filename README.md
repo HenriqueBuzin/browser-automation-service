@@ -4,20 +4,24 @@ Plataforma assíncrona e durável de automação de navegadores para serviços h
 consumidor envia um plano declarativo tipado; o serviço compila o job para a matriz real de
 Playwright, Puppeteer e Selenium sem exigir alterações no código do consumidor.
 
+O projeto é uma plataforma E2E autocontida e instalável em qualquer VPS com Docker, PostgreSQL e
+Redis. Os consumidores usam a API remota como caminho principal e mantêm Playwright local somente
+como fallback de indisponibilidade.
+
 Quando `drivers` e `browsers` não são informados, o job é executado em todas as combinações
 habilitadas. Quando são informados, funcionam como filtros. Combinações fisicamente impossíveis,
 como Puppeteer com WebKit, são registradas como `unsupported` em vez de serem simuladas.
 
 ## Matriz
 
-| Driver     | Chromium | Firefox  | WebKit | Edge     |
-| ---------- | -------- | -------- | ------ | -------- |
-| Playwright | sim      | sim      | sim    | não      |
-| Puppeteer  | sim      | sim      | não    | não      |
-| Selenium   | opcional | opcional | não    | opcional |
+| Driver     | Chromium | Firefox | WebKit | Edge |
+| ---------- | -------- | ------- | ------ | ---- |
+| Playwright | sim      | sim     | sim    | não  |
+| Puppeteer  | sim      | sim     | não    | não  |
+| Selenium   | sim      | sim     | não    | sim  |
 
-A instalação padrão executa cinco combinações Playwright/Puppeteer. O profile `selenium-all`
-adiciona Chromium, Firefox e Edge, totalizando oito.
+A instalação padrão mantém Playwright, Puppeteer e Selenium ativos, sem profiles ou flags de
+ativação, totalizando oito combinações.
 
 ## Arquitetura
 
@@ -36,11 +40,11 @@ adiciona Chromium, Firefox e Edge, totalizando oito.
 - bloqueio de SSRF para destinos privados, com allowlist explícita;
 - cobertura obrigatória de 100% em linhas, branches, statements e funções.
 
-O Redis é externo na VPS e chega por `REDIS_URL` e `REDIS_NETWORK`, com
-credencial, database/prefixo e SLA isolados. O Compose não cria Redis. Keycloak
-não foi colocado no caminho crítico da rede
-interna: a porta `Authenticator` permite adicioná-lo quando houver múltiplos tenants, acesso externo
-ou necessidade de OAuth2 client credentials.
+O Redis é externo na VPS e chega por `REDIS_HOST`, `REDIS_PORT`, `REDIS_DB`, `REDIS_USER`,
+`REDIS_PASSWORD` e `REDIS_NETWORK`, com credencial, database e SLA isolados. O Compose não cria
+Redis. Keycloak não foi colocado no caminho crítico da rede interna: a porta `Authenticator` permite
+adicioná-lo quando houver múltiplos tenants, acesso externo ou necessidade de OAuth2 client
+credentials.
 
 Veja [a arquitetura detalhada](docs/architecture.md). Veja também a
 [política de adapters e failover dos consumidores](docs/consumer-adapters.md).
@@ -159,7 +163,8 @@ npx.cmd playwright install chromium firefox webkit
 
 O deployment usa o PostgreSQL compartilhado da VPS pela rede externa `postgres-network`. Antes do
 primeiro start, crie o usuário e o banco `browser_automation` no PostgreSQL central e confirme que o
-hostname registrado em `DATABASE_URL` resolve nessa rede.
+hostname registrado em `POSTGRES_HOST` resolve nessa rede. Host, porta, banco e usuário chegam como
+variáveis; `POSTGRES_PASSWORD` é convertido em Docker Secret.
 
 Crie uma vez as redes externas da VPS:
 
@@ -173,9 +178,16 @@ O Jenkins mantém o `.env` fora do repositório e cria um link simbólico no che
 variáveis sensíveis desse arquivo, transforma cada uma em um Docker Secret e monta somente o arquivo
 correspondente em `/run/secrets`:
 
+- PostgreSQL: `POSTGRES_HOST`, `POSTGRES_PORT`, `POSTGRES_DB`, `POSTGRES_USER` e
+  `POSTGRES_PASSWORD`;
+- Redis: `REDIS_HOST`, `REDIS_PORT`, `REDIS_DB`, `REDIS_USER` e `REDIS_PASSWORD`;
+- plataforma: `API_KEY`;
+- redes externas: `PROXY_NETWORK`, `POSTGRES_NETWORK`, `REDIS_NETWORK` e
+  `BROWSER_AUTOMATION_NETWORK`.
+
 ```bash
-ln -sfn /root/envs/browser-automation-service.env .env
-chmod 600 /root/envs/browser-automation-service.env
+ln -sfn /root/projects/envs/browser-automation-service.env .env
+chmod 600 /root/projects/envs/browser-automation-service.env
 docker compose up -d --build
 docker compose ps
 ```
@@ -183,7 +195,7 @@ docker compose ps
 Na VPS, o fluxo recomendado é:
 
 ```text
-/root/envs/browser-automation-service.env
+/root/projects/envs/browser-automation-service.env
   -> link simbólico .env criado pelo Jenkins
   -> secrets.environment do Docker Compose
   -> /run/secrets/* dentro do container
@@ -195,18 +207,19 @@ entregue ao dispatcher nem aos workers, e a aplicação mantém somente seu hash
 inicialização da configuração. O `.env` continua contendo as credenciais em texto e deve permanecer
 fora do Git, legível apenas por `root` e pelo usuário de deployment.
 
-O deployment padrão inicia:
+O deployment padrão usa PostgreSQL e Redis externos e inicia:
 
-- Redis;
 - API;
 - dispatcher;
 - worker Playwright;
-- worker Puppeteer.
+- worker Puppeteer;
+- worker Selenium;
+- Selenium Hub;
+- nós Selenium Chromium, Firefox e Edge.
 
-A API entra nas redes externas `proxy-network`, `postgres-network`,
-`redis-network` e `browser-automation-network`. Backend, dispatcher e workers
-entram nas redes externas necessárias; somente backend e processos que realmente
-abrem páginas entram na rede dos consumidores.
+A API entra nas redes externas `proxy-network`, `postgres-network`, `redis-network` e
+`browser-automation-network`. Backend, dispatcher e workers entram nas redes externas necessárias;
+somente backend e processos que realmente abrem páginas entram na rede dos consumidores.
 
 Um consumidor Docker conecta somente à rede de automação:
 
@@ -223,22 +236,18 @@ networks:
     name: ${BROWSER_AUTOMATION_NETWORK:-browser-automation-network}
 ```
 
-Dentro dessa rede, a URL estável da API é `http://browser-automation-api:3000`. Consumidores nunca
-entram na `postgres-network`.
+Dentro dessa rede, a URL estável da API é `http://browser-automation-service:3000` em produção e
+`http://browser-automation-service-dev:3000` em desenvolvimento. Consumidores nunca entram nas redes
+de PostgreSQL ou Redis.
 
-A API é publicada somente em `127.0.0.1`. Selenium faz parte da stack padrão;
-para anunciá-lo na API, configure:
+O adaptador de cada consumidor deve enviar o plano pela API v2 e aguardar o estado terminal.
+Playwright local é executado somente se DNS, conexão ou timeout falhar antes da aceitação, ou se o
+`POST` retornar `429`, `502`, `503` ou `504`. Depois de um `200` ou `202` com `jobId`, uma falha de
+consulta não autoriza fallback: o mesmo job deve ser recuperado para impedir execução duplicada.
 
-```bash
-cat >> .env <<'EOF'
-BROWSER_SELENIUM_REMOTE_URL=http://selenium-hub:4444/wd/hub
-SELENIUM_BROWSERS=chromium,firefox,edge
-EOF
-docker compose -f docker-compose.yml up -d --build
-```
-
-Os serviços Selenium e o worker correspondente sobem sem profile. A API só
-anuncia essas combinações quando `BROWSER_SELENIUM_REMOTE_URL` estiver definido.
+A API é publicada somente em `127.0.0.1` e pelas redes Docker autorizadas. Playwright, Puppeteer e
+Selenium fazem parte da stack permanente. O Compose configura internamente o Selenium Hub e anuncia
+Chromium, Firefox e Edge sem depender de variável de ativação.
 
 Para usar artefatos S3, preencha `AWS_ACCESS_KEY_ID` e `AWS_SECRET_ACCESS_KEY`, selecione
 `ARTIFACT_BACKEND=s3` no `.env` e aplique o overlay:
@@ -273,4 +282,5 @@ credencial estiver em uso, ela ainda pode existir transitoriamente na memória d
 2. Migre testes portáteis de Weslei Bassotto e Dias/Kovaltchuk.
 3. Migre fluxos efêmeros do NSC Bot e Whats Forms.
 4. Mantenha automações com perfil persistente fora do pool.
-5. Ative Selenium somente para jobs que realmente exigem Grid/Edge.
+5. Deixe cada consumidor filtrar engines e browsers por job quando não precisar executar a matriz
+   completa.
