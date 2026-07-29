@@ -1,12 +1,12 @@
-import type { AutomationEngine } from "../contracts/job-contract.js";
+import type { AutomationAdapter } from "../contracts/job-contract.js";
 import type { ArtifactStore } from "../ports/artifact-store.js";
 import type { JobRepository } from "../ports/job-repository.js";
 import type { AutomationSession } from "./automation-session.js";
 import { JobStepRunner, StepExecutionError, serializeError } from "./job-step-runner.js";
-import type { ProviderRegistry } from "./provider-registry.js";
+import type { AdapterRegistry } from "./adapter-registry.js";
 import type { SessionConnectorRegistry } from "./session-connector-registry.js";
 import type { RuntimeValues } from "./submit-job.js";
-import type { ProviderSession } from "../domain/automation-provider.js";
+import type { AdapterSession } from "../domain/automation-adapter.js";
 import type { WeightedSemaphore } from "./weighted-semaphore.js";
 import { PlatformObservability } from "./observability.js";
 import { silentLogger, type PlatformLogger } from "./platform-logger.js";
@@ -22,8 +22,8 @@ export class ExecutionRunner {
   readonly #steps = new JobStepRunner();
 
   public constructor(
-    private readonly driver: AutomationEngine,
-    private readonly providers: ProviderRegistry,
+    private readonly adapter: AutomationAdapter,
+    private readonly adapters: AdapterRegistry,
     private readonly connectors: SessionConnectorRegistry,
     private readonly repository: JobRepository,
     private readonly artifacts: ArtifactStore,
@@ -35,10 +35,10 @@ export class ExecutionRunner {
 
   public async execute(executionId: string): Promise<void> {
     const pending = await this.repository.findExecution(executionId);
-    if (pending?.driver !== this.driver || pending.status !== "queued") return;
+    if (pending?.adapter !== this.adapter || pending.status !== "queued") return;
     const releaseCapacity = await this.resources.acquire(pending.browser === "webkit" ? 2 : 1);
     const startedAt = this.runtime.now();
-    const execution = await this.repository.claimExecution(executionId, this.driver, startedAt);
+    const execution = await this.repository.claimExecution(executionId, this.adapter, startedAt);
     if (!execution) {
       releaseCapacity();
       return;
@@ -51,18 +51,18 @@ export class ExecutionRunner {
     const startedMonotonic = performance.now();
     const observation = this.observability.startExecution(execution);
     this.logger.info(
-      { browser: execution.browser, driver: execution.driver, executionId },
+      { browser: execution.browser, adapter: execution.adapter, executionId },
       "execution started",
     );
     let session: AutomationSession | undefined;
-    let providerSession: ProviderSession | undefined;
+    let adapterSession: AdapterSession | undefined;
     try {
-      providerSession = await this.providers
-        .getForBrowser(execution.driver, execution.browser)
+      adapterSession = await this.adapters
+        .getForBrowser(execution.adapter, execution.browser)
         .launch(execution.id, execution.browser);
       session = await this.connectors
-        .get(execution.driver, execution.browser)
-        .connect(providerSession.endpoint, providerSession.nativeHandle);
+        .get(execution.adapter, execution.browser)
+        .connect(adapterSession.endpoint, adapterSession.nativeHandle);
       const result = await this.#steps.run(session, aggregate.job.definition.steps, {
         beforeStep: async () => {
           const latest = await this.repository.findExecution(execution.id);
@@ -125,7 +125,7 @@ export class ExecutionRunner {
       this.logger.error({ error, executionId }, "execution failed");
     } finally {
       if (session) await session.close().catch(() => undefined);
-      else if (providerSession) await providerSession.close().catch(() => undefined);
+      else if (adapterSession) await adapterSession.close().catch(() => undefined);
       releaseCapacity();
     }
   }

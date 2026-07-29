@@ -1,20 +1,21 @@
 import { Queue } from "bullmq";
 import { Redis } from "ioredis";
-import type { AutomationEngine } from "../../contracts/job-contract.js";
+import type { AutomationAdapter } from "../../contracts/job-contract.js";
+import { automationAdapters } from "../../domain/automation-adapter.js";
 import type { ExecutionQueue } from "../../ports/execution-queue.js";
 
-export const queueName = (driver: AutomationEngine): string => `browser-execution-${driver}`;
+export const queueName = (adapter: AutomationAdapter): string => `browser-execution-${adapter}`;
 
 export class BullMqExecutionQueue implements ExecutionQueue {
   readonly #connection: Redis;
-  readonly #queues: Map<AutomationEngine, Queue>;
+  readonly #queues: Map<AutomationAdapter, Queue>;
 
   public constructor(redisUrl: string) {
     this.#connection = new Redis(redisUrl, { maxRetriesPerRequest: 1 });
     this.#queues = new Map(
-      (["playwright", "puppeteer", "selenium"] as const).map((driver) => [
-        driver,
-        new Queue(queueName(driver), {
+      automationAdapters.map((adapter) => [
+        adapter,
+        new Queue(queueName(adapter), {
           connection: this.#connection,
           defaultJobOptions: {
             removeOnComplete: 1_000,
@@ -25,8 +26,8 @@ export class BullMqExecutionQueue implements ExecutionQueue {
     );
   }
 
-  public async cancel(executionId: string, driver: AutomationEngine): Promise<void> {
-    const job = await this.#queue(driver).getJob(executionId);
+  public async cancel(executionId: string, adapter: AutomationAdapter): Promise<void> {
+    const job = await this.#queue(adapter).getJob(executionId);
     if (job && !["active", "completed", "failed"].includes(await job.getState())) {
       await job.remove();
     }
@@ -37,8 +38,8 @@ export class BullMqExecutionQueue implements ExecutionQueue {
     this.#connection.disconnect();
   }
 
-  public async enqueue(executionId: string, driver: AutomationEngine): Promise<void> {
-    await this.#queue(driver).add("execute", { executionId }, { jobId: executionId });
+  public async enqueue(executionId: string, adapter: AutomationAdapter): Promise<void> {
+    await this.#queue(adapter).add("execute", { executionId }, { jobId: executionId });
   }
 
   public async ready(): Promise<boolean> {
@@ -46,9 +47,9 @@ export class BullMqExecutionQueue implements ExecutionQueue {
     return true;
   }
 
-  #queue(driver: AutomationEngine): Queue {
-    const queue = this.#queues.get(driver);
-    if (!queue) throw new Error(`Queue is not configured for ${driver}`);
+  #queue(adapter: AutomationAdapter): Queue {
+    const queue = this.#queues.get(adapter);
+    if (!queue) throw new Error(`Queue is not configured for ${adapter}`);
     return queue;
   }
 }

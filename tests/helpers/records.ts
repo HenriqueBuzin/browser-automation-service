@@ -7,7 +7,7 @@ export const fixedNow = new Date("2026-07-26T12:00:00.000Z");
 export function jobDefinition(overrides: Partial<AutomationJob> = {}): AutomationJob {
   return {
     clientId: "test-client",
-    schemaVersion: 1,
+    schemaVersion: 2,
     steps: [{ action: "goto", url: "https://example.test" }],
     ...overrides,
   };
@@ -32,7 +32,7 @@ export function executionRecord(overrides: Partial<ExecutionRecord> = {}): Execu
     attempt: 0,
     browser: "chromium",
     createdAt: fixedNow,
-    driver: "playwright",
+    adapter: "playwright",
     id: "00000000-0000-4000-8000-000000000002",
     jobId: "00000000-0000-4000-8000-000000000001",
     outputs: {},

@@ -1,6 +1,6 @@
 import type {
   AutomationBrowser,
-  AutomationEngine,
+  AutomationAdapter,
   AutomationStep,
 } from "../contracts/job-contract.js";
 
@@ -9,13 +9,13 @@ const fallbackStatuses = new Set([429, 502, 503, 504]);
 
 export type AutomationRequest = {
   browsers?: readonly AutomationBrowser[];
-  drivers?: readonly AutomationEngine[];
+  adapters?: readonly AutomationAdapter[];
   steps: readonly AutomationStep[];
 };
 
 export type AutomationExecutionSnapshot = {
   browser: AutomationBrowser;
-  driver: AutomationEngine;
+  adapter: AutomationAdapter;
   error?: { category: string; message: string; name: string };
   executionId: string;
   outputs: Record<string, boolean | number | string>;
@@ -28,7 +28,7 @@ export type AutomationJobSnapshot = {
   status: string;
 };
 
-export type AutomationAdapter = {
+export type BrowserAutomationExecutor = {
   execute: (request: AutomationRequest, idempotencyKey: string) => Promise<AutomationJobSnapshot>;
 };
 
@@ -70,7 +70,7 @@ export type BrowserAutomationClientOptions = {
   resultTimeoutMs?: number;
 };
 
-export class BrowserAutomationClient implements AutomationAdapter {
+export class BrowserAutomationClient implements BrowserAutomationExecutor {
   readonly #apiKey: string;
   readonly #baseUrl: string;
   readonly #clientId: string;
@@ -131,8 +131,8 @@ export class BrowserAutomationClient implements AutomationAdapter {
     return {
       ...(request.browsers?.length ? { browsers: request.browsers } : {}),
       clientId: this.#clientId,
-      ...(request.drivers?.length ? { drivers: request.drivers } : {}),
-      schemaVersion: 1 as const,
+      ...(request.adapters?.length ? { adapters: request.adapters } : {}),
+      schemaVersion: 2 as const,
       steps: request.steps,
     };
   }
@@ -187,10 +187,10 @@ export class BrowserAutomationClient implements AutomationAdapter {
   }
 }
 
-export class FailoverBrowserAutomationAdapter implements AutomationAdapter {
+export class FailoverBrowserAutomationAdapter implements BrowserAutomationExecutor {
   public constructor(
-    private readonly remote: AutomationAdapter,
-    private readonly local: AutomationAdapter,
+    private readonly remote: BrowserAutomationExecutor,
+    private readonly local: BrowserAutomationExecutor,
   ) {}
 
   public async execute(

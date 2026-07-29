@@ -5,7 +5,7 @@ import {
   BrowserAutomationResponseError,
   BrowserAutomationUnavailableError,
   FailoverBrowserAutomationAdapter,
-  type AutomationAdapter,
+  type BrowserAutomationExecutor,
   type AutomationJobSnapshot,
   type AutomationRequest,
 } from "../src/client/automation-client.js";
@@ -62,7 +62,7 @@ describe("BrowserAutomationClient", () => {
     const fetchMock = vi.fn(async (_input, init) => {
       expect(JSON.parse(String(init?.body))).toEqual({
         clientId: "consumer",
-        schemaVersion: 1,
+        schemaVersion: 2,
         steps: request.steps,
       });
       expect(init?.headers).toMatchObject({
@@ -73,21 +73,21 @@ describe("BrowserAutomationClient", () => {
     }) as typeof fetch;
 
     await expect(
-      client(fetchMock).execute({ ...request, browsers: [], drivers: [] }, "idempotency-key"),
+      client(fetchMock).execute({ ...request, browsers: [], adapters: [] }, "idempotency-key"),
     ).resolves.toEqual(passed);
   });
 
-  it("sends explicit browser and driver filters", async () => {
+  it("sends explicit browser and adapter filters", async () => {
     const fetchMock = vi.fn(async (_input, init) => {
       expect(JSON.parse(String(init?.body))).toMatchObject({
         browsers: ["firefox"],
-        drivers: ["playwright"],
+        adapters: ["playwright"],
       });
       return response(passed, 202);
     }) as typeof fetch;
 
     await client(fetchMock).execute(
-      { ...request, browsers: ["firefox"], drivers: ["playwright"] },
+      { ...request, browsers: ["firefox"], adapters: ["playwright"] },
       "idempotency-key",
     );
   });
@@ -186,10 +186,10 @@ describe("BrowserAutomationClient", () => {
 
 describe("FailoverBrowserAutomationAdapter", () => {
   it("uses local execution only for a failure known to precede remote acceptance", async () => {
-    const remote: AutomationAdapter = {
+    const remote: BrowserAutomationExecutor = {
       execute: vi.fn().mockRejectedValue(new BrowserAutomationUnavailableError("offline")),
     };
-    const local: AutomationAdapter = { execute: vi.fn().mockResolvedValue(passed) };
+    const local: BrowserAutomationExecutor = { execute: vi.fn().mockResolvedValue(passed) };
     const adapter = new FailoverBrowserAutomationAdapter(remote, local);
 
     await expect(adapter.execute(request, "idempotency-key")).resolves.toEqual(passed);
@@ -197,12 +197,12 @@ describe("FailoverBrowserAutomationAdapter", () => {
   });
 
   it("propagates every post-acceptance or contract failure without local execution", async () => {
-    const remote: AutomationAdapter = {
+    const remote: BrowserAutomationExecutor = {
       execute: vi
         .fn()
         .mockRejectedValue(new BrowserAutomationOutcomeUnknownError("job-1", "unknown")),
     };
-    const local: AutomationAdapter = { execute: vi.fn().mockResolvedValue(passed) };
+    const local: BrowserAutomationExecutor = { execute: vi.fn().mockResolvedValue(passed) };
 
     await expect(
       new FailoverBrowserAutomationAdapter(remote, local).execute(request, "idempotency-key"),

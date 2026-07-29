@@ -10,9 +10,9 @@ alterar os testes declarativos.
 
 ## Seleção da matriz
 
-`drivers` e `browsers` são filtros opcionais. O cliente omite campos ausentes ou arrays vazios.
+`adapters` e `browsers` são filtros opcionais. O cliente omite campos ausentes ou arrays vazios.
 Consequentemente, o padrão executa todas as combinações habilitadas pelo deployment. Uma aplicação
-só envia filtros quando sua regra exige explicitamente um driver ou navegador.
+só envia filtros quando sua regra exige explicitamente um adapter ou navegador.
 
 ## Failover seguro
 

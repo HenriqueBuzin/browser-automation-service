@@ -1,4 +1,4 @@
-import type { AutomationBrowser, AutomationEngine } from "../domain/automation-provider.js";
+import type { AutomationBrowser, AutomationAdapter } from "../domain/automation-adapter.js";
 import type { AutomationSessionConnector } from "./automation-session.js";
 
 export class SessionConnectorRegistry {
@@ -6,17 +6,17 @@ export class SessionConnectorRegistry {
 
   public constructor(connectors: AutomationSessionConnector[]) {
     for (const connector of connectors) {
-      this.#connectors.set(this.#key(connector.driver, connector.browser), connector);
+      this.#connectors.set(this.#key(connector.adapter, connector.browser), connector);
     }
   }
 
-  public get(driver: AutomationEngine, browser: AutomationBrowser): AutomationSessionConnector {
-    const connector = this.#connectors.get(this.#key(driver, browser));
-    if (!connector) throw new Error(`No job connector for ${driver}/${browser}`);
+  public get(adapter: AutomationAdapter, browser: AutomationBrowser): AutomationSessionConnector {
+    const connector = this.#connectors.get(this.#key(adapter, browser));
+    if (!connector) throw new Error(`No job connector for ${adapter}/${browser}`);
     return connector;
   }
 
-  #key(driver: AutomationEngine, browser: AutomationBrowser): string {
-    return `${driver}:${browser}`;
+  #key(adapter: AutomationAdapter, browser: AutomationBrowser): string {
+    return `${adapter}:${browser}`;
   }
 }

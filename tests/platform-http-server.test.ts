@@ -49,7 +49,7 @@ function dependencies() {
     authorize: vi.fn(async (credentials: { apiKey?: string }) => credentials.apiKey === "valid"),
   };
   const compiler = new JobCompiler([
-    { actions: ["goto"], browser: "chromium", driver: "playwright" },
+    { actions: ["goto"], browser: "chromium", adapter: "playwright" },
   ]);
   return {
     artifactStore,
@@ -116,7 +116,7 @@ describe("platform HTTP API", () => {
       url: "/v2/jobs/plan",
     });
     expect(plan.statusCode).toBe(200);
-    expect(plan.json()).toMatchObject({ schemaVersion: 1 });
+    expect(plan.json()).toMatchObject({ schemaVersion: 2 });
     const submitted = await server.inject({
       headers: { ...auth, "idempotency-key": "idempotency-1" },
       method: "POST",

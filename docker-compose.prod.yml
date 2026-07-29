@@ -47,6 +47,13 @@ services:
       - redis_password
       - aws_access_key_id
       - aws_secret_access_key
+    networks: !override
+      browser-automation-internal:
+      postgres-network:
+      redis-network:
+      browser-automation-network:
+        aliases:
+          - browser-adapter-playwright
 
   worker-puppeteer:
     labels:
@@ -59,6 +66,13 @@ services:
       - redis_password
       - aws_access_key_id
       - aws_secret_access_key
+    networks: !override
+      browser-automation-internal:
+      postgres-network:
+      redis-network:
+      browser-automation-network:
+        aliases:
+          - browser-adapter-puppeteer
 
   worker-selenium:
     labels:
@@ -71,6 +85,13 @@ services:
       - redis_password
       - aws_access_key_id
       - aws_secret_access_key
+    networks: !override
+      browser-automation-internal:
+      postgres-network:
+      redis-network:
+      browser-automation-network:
+        aliases:
+          - browser-adapter-selenium
 
 secrets:
   aws_access_key_id:

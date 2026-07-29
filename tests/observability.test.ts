@@ -124,7 +124,7 @@ describe("OpenTelemetry integration", () => {
     expect(mocks.counter.add).toHaveBeenCalled();
     expect(mocks.histogram.record).toHaveBeenCalledWith(
       25,
-      expect.objectContaining({ "browser.driver": "playwright" }),
+      expect.objectContaining({ "browser.adapter": "playwright" }),
     );
     expect(mocks.span.setStatus).toHaveBeenCalledWith({ code: 1 });
     expect(mocks.span.end).toHaveBeenCalled();

@@ -37,20 +37,20 @@ describe("contracts, compiler and state", () => {
     );
     expect(compiler.manifests()).toHaveLength(6);
     expect(compiler.compile(jobDefinition())).toHaveLength(6);
-    expect(compiler.compile(jobDefinition({ drivers: ["puppeteer"] }))).toEqual([
-      { browser: "chromium", driver: "puppeteer", supported: true },
-      { browser: "firefox", driver: "puppeteer", supported: true },
+    expect(compiler.compile(jobDefinition({ adapters: ["puppeteer"] }))).toEqual([
+      { browser: "chromium", adapter: "puppeteer", supported: true },
+      { browser: "firefox", adapter: "puppeteer", supported: true },
     ]);
     expect(compiler.compile(jobDefinition({ browsers: ["edge"] }))).toHaveLength(3);
     expect(
       compiler.compile(
-        jobDefinition({ browsers: ["webkit"], drivers: ["playwright", "puppeteer"] }),
+        jobDefinition({ browsers: ["webkit"], adapters: ["playwright", "puppeteer"] }),
       ),
     ).toEqual([
-      { browser: "webkit", driver: "playwright", supported: true },
+      { browser: "webkit", adapter: "playwright", supported: true },
       {
         browser: "webkit",
-        driver: "puppeteer",
+        adapter: "puppeteer",
         reason: "puppeteer does not support webkit in this deployment",
         supported: false,
       },
@@ -59,12 +59,12 @@ describe("contracts, compiler and state", () => {
 
   it("marks actions absent from a manifest as unsupported and blocks unsafe protocols", () => {
     const compiler = new JobCompiler([
-      { actions: ["goto"], browser: "chromium", driver: "playwright" },
+      { actions: ["goto"], browser: "chromium", adapter: "playwright" },
     ]);
     expect(compiler.compile(jobDefinition({ steps: [{ action: "reload" }] }))).toEqual([
       {
         browser: "chromium",
-        driver: "playwright",
+        adapter: "playwright",
         reason: "playwright/chromium does not support 'reload'",
         supported: false,
       },

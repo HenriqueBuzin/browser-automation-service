@@ -10,11 +10,11 @@ import type {
   AutomationSession,
   AutomationSessionConnector,
 } from "../../application/automation-session.js";
-import type { AutomationBrowser } from "../../domain/automation-provider.js";
+import type { AutomationBrowser } from "../../domain/automation-adapter.js";
 import type { ExtractKind, MouseButton, SelectorState } from "../../domain/automation-job.js";
 
 export class PlaywrightSessionConnector implements AutomationSessionConnector {
-  public readonly driver = "playwright";
+  public readonly adapter = "playwright";
 
   public constructor(public readonly browser: AutomationBrowser) {}
 

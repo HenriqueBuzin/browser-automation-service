@@ -8,12 +8,12 @@ import type {
   AutomationSession,
   AutomationSessionConnector,
 } from "../../application/automation-session.js";
-import type { AutomationBrowser } from "../../domain/automation-provider.js";
+import type { AutomationBrowser } from "../../domain/automation-adapter.js";
 import type { ExtractKind, MouseButton, SelectorState } from "../../domain/automation-job.js";
 import { pollUntil } from "./polling.js";
 
 export class PuppeteerSessionConnector implements AutomationSessionConnector {
-  public readonly driver = "puppeteer";
+  public readonly adapter = "puppeteer";
 
   public constructor(public readonly browser: AutomationBrowser) {}
 

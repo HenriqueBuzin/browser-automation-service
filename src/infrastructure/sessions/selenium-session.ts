@@ -11,7 +11,7 @@ import type {
   AutomationSession,
   AutomationSessionConnector,
 } from "../../application/automation-session.js";
-import type { AutomationBrowser } from "../../domain/automation-provider.js";
+import type { AutomationBrowser } from "../../domain/automation-adapter.js";
 import type { ExtractKind, MouseButton, SelectorState } from "../../domain/automation-job.js";
 import { pollUntil } from "./polling.js";
 
@@ -22,7 +22,7 @@ const seleniumNames: Record<Exclude<AutomationBrowser, "webkit">, string> = {
 };
 
 export class SeleniumSessionConnector implements AutomationSessionConnector {
-  public readonly driver = "selenium";
+  public readonly adapter = "selenium";
 
   public constructor(public readonly browser: AutomationBrowser) {}
 

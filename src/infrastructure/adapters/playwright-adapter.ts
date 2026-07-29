@@ -1,15 +1,15 @@
 import { chromium, firefox, webkit } from "playwright";
 import type {
   AutomationBrowser,
-  AutomationProvider,
-  ProviderSession,
-} from "../../domain/automation-provider.js";
+  AdapterRuntime,
+  AdapterSession,
+} from "../../domain/automation-adapter.js";
 
-export class PlaywrightProvider implements AutomationProvider {
+export class PlaywrightAdapter implements AdapterRuntime {
   public readonly browsers = ["chromium", "firefox", "webkit"] as const;
-  public readonly engine = "playwright";
+  public readonly adapter = "playwright";
 
-  public async launch(leaseId: string, browser: AutomationBrowser): Promise<ProviderSession> {
+  public async launch(leaseId: string, browser: AutomationBrowser): Promise<AdapterSession> {
     const browserType =
       browser === "chromium" ? chromium : browser === "firefox" ? firefox : webkit;
     const server = await browserType.launchServer({
@@ -23,7 +23,7 @@ export class PlaywrightProvider implements AutomationProvider {
         await server.close();
       },
       endpoint: server.wsEndpoint(),
-      engine: this.engine,
+      adapter: this.adapter,
       onClose: (listener) => {
         server.once("close", listener);
       },

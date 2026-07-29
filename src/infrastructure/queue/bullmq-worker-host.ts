@@ -1,6 +1,6 @@
 import { Worker } from "bullmq";
 import { Redis } from "ioredis";
-import type { AutomationEngine } from "../../contracts/job-contract.js";
+import type { AutomationAdapter } from "../../contracts/job-contract.js";
 import type { ExecutionRunner } from "../../application/execution-runner.js";
 import { queueName } from "./bullmq-execution-queue.js";
 
@@ -10,13 +10,13 @@ export class BullMqWorkerHost {
 
   public constructor(
     redisUrl: string,
-    driver: AutomationEngine,
+    adapter: AutomationAdapter,
     runner: ExecutionRunner,
     concurrency: number,
   ) {
     this.#connection = new Redis(redisUrl, { maxRetriesPerRequest: null });
     this.#worker = new Worker<{ executionId: string }>(
-      queueName(driver),
+      queueName(adapter),
       async (job) => runner.execute(job.data.executionId),
       {
         concurrency,

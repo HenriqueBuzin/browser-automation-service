@@ -80,6 +80,14 @@ describe("BullMQ adapters", () => {
       "browser-execution-playwright",
       "browser-execution-puppeteer",
       "browser-execution-selenium",
+      "browser-execution-webdriverio",
+      "browser-execution-nightwatch",
+      "browser-execution-testcafe",
+      "browser-execution-taiko",
+      "browser-execution-cypress",
+      "browser-execution-cdp",
+      "browser-execution-webdriver-bidi",
+      "browser-execution-appium",
     ]);
     expect(queueName("selenium")).toBe("browser-execution-selenium");
     await queue.enqueue("execution", "puppeteer");
@@ -113,7 +121,7 @@ describe("BullMQ adapters", () => {
     expect(remove).toHaveBeenCalledOnce();
   });
 
-  it("hosts a driver worker and delegates execution", async () => {
+  it("hosts a adapter worker and delegates execution", async () => {
     const execute = vi.fn(async () => undefined);
     const host = new BullMqWorkerHost("redis://worker", "selenium", { execute } as never, 4);
     const worker = mocks.workers[0];

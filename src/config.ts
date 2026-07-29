@@ -1,10 +1,22 @@
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
-import type { AutomationBrowser, AutomationEngine } from "./contracts/job-contract.js";
+import type { AutomationBrowser, AutomationAdapter } from "./contracts/job-contract.js";
 
 const seleniumBrowserNames = ["chromium", "firefox", "edge"] as const;
 const roles = ["api", "dispatcher", "worker"] as const;
-const drivers = ["playwright", "puppeteer", "selenium"] as const;
+const adapters = [
+  "playwright",
+  "puppeteer",
+  "selenium",
+  "webdriverio",
+  "nightwatch",
+  "testcafe",
+  "taiko",
+  "cypress",
+  "cdp",
+  "webdriver-bidi",
+  "appium",
+] as const;
 
 export type AppConfig = {
   artifactBackend: "local" | "s3";
@@ -34,7 +46,7 @@ export type AppConfig = {
   swaggerEnabled: boolean;
   workerConcurrency: number;
   workerCapacityUnits: number;
-  workerDriver: AutomationEngine | undefined;
+  workerAdapter: AutomationAdapter | undefined;
 };
 
 type SecretFileReader = (path: string) => Buffer;
@@ -56,11 +68,11 @@ export function loadConfig(
   if (Boolean(awsAccessKeyId) !== Boolean(awsSecretAccessKey)) {
     throw new Error("AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY must be configured together");
   }
-  const workerDriver = environment.WORKER_DRIVER
-    ? enumeration(environment.WORKER_DRIVER, drivers, "WORKER_DRIVER")
+  const workerAdapter = environment.WORKER_ADAPTER
+    ? enumeration(environment.WORKER_ADAPTER, adapters, "WORKER_ADAPTER")
     : undefined;
-  if (appRole === "worker" && !workerDriver) {
-    throw new Error("WORKER_DRIVER is required when APP_ROLE=worker");
+  if (appRole === "worker" && !workerAdapter) {
+    throw new Error("WORKER_ADAPTER is required when APP_ROLE=worker");
   }
   const workerCapacityUnits = integer(
     "WORKER_CAPACITY_UNITS",
@@ -68,7 +80,7 @@ export function loadConfig(
     2,
     1,
   );
-  if (appRole === "worker" && workerDriver === "playwright" && workerCapacityUnits < 2) {
+  if (appRole === "worker" && workerAdapter === "playwright" && workerCapacityUnits < 2) {
     throw new Error("Playwright workers require at least 2 capacity units for WebKit");
   }
   const publicBaseUrl = text(environment.PUBLIC_BASE_URL, "http://localhost:3000").replace(
@@ -129,7 +141,7 @@ export function loadConfig(
     swaggerEnabled: boolean(environment.SWAGGER_ENABLED, true),
     workerConcurrency: integer("WORKER_CONCURRENCY", environment.WORKER_CONCURRENCY, 1, 1),
     workerCapacityUnits,
-    workerDriver,
+    workerAdapter,
   };
 }
 

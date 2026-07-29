@@ -22,7 +22,7 @@ export class JobService {
     await Promise.all(
       current.executions
         .filter((execution) => ["queued", "running"].includes(execution.status))
-        .map((execution) => this.queue.cancel(execution.id, execution.driver)),
+        .map((execution) => this.queue.cancel(execution.id, execution.adapter)),
     );
     return true;
   }
@@ -36,7 +36,7 @@ export class JobService {
       createdAt: now,
       executionId,
       id: this.runtime.id(),
-      topic: `execution.${execution.driver}`,
+      topic: `execution.${execution.adapter}`,
     });
   }
 }

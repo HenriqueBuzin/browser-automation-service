@@ -1,4 +1,4 @@
-import type { AutomationBrowser, AutomationEngine } from "../domain/automation-provider.js";
+import type { AutomationBrowser, AutomationAdapter } from "../domain/automation-adapter.js";
 import type { ExtractKind, MouseButton, SelectorState } from "../domain/automation-job.js";
 
 export type AutomationSession = {
@@ -30,6 +30,6 @@ export type AutomationSession = {
 
 export type AutomationSessionConnector = {
   browser: AutomationBrowser;
-  driver: AutomationEngine;
+  adapter: AutomationAdapter;
   connect: (endpoint: string, nativeHandle?: unknown) => Promise<AutomationSession>;
 };

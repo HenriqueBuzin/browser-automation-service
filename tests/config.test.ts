@@ -231,7 +231,7 @@ describe("loadConfig", () => {
         SWAGGER_ENABLED: "false",
         WORKER_CAPACITY_UNITS: "2",
         WORKER_CONCURRENCY: "3",
-        WORKER_DRIVER: "playwright",
+        WORKER_ADAPTER: "playwright",
       }),
     ).toMatchObject({
       allowedHosts: ["example.com", "*.internal.test"],
@@ -260,24 +260,24 @@ describe("loadConfig", () => {
       swaggerEnabled: false,
       workerCapacityUnits: 2,
       workerConcurrency: 3,
-      workerDriver: "playwright",
+      workerAdapter: "playwright",
     });
   });
 
-  it("validates roles, drivers, worker capacity and booleans", () => {
+  it("validates roles, adapters, worker capacity and booleans", () => {
     expect(() => loadConfig({ API_KEY: apiKey, APP_ROLE: "invalid" })).toThrow("APP_ROLE");
-    expect(() => loadConfig({ APP_ROLE: "worker" })).toThrow("WORKER_DRIVER is required");
+    expect(() => loadConfig({ APP_ROLE: "worker" })).toThrow("WORKER_ADAPTER is required");
     expect(() =>
       loadConfig({
         APP_ROLE: "worker",
-        WORKER_DRIVER: "invalid",
+        WORKER_ADAPTER: "invalid",
       }),
-    ).toThrow("WORKER_DRIVER");
+    ).toThrow("WORKER_ADAPTER");
     expect(() =>
       loadConfig({
         APP_ROLE: "worker",
         WORKER_CAPACITY_UNITS: "1",
-        WORKER_DRIVER: "playwright",
+        WORKER_ADAPTER: "playwright",
       }),
     ).toThrow("at least 2 capacity");
     expect(() => loadConfig({ API_KEY: apiKey, SWAGGER_ENABLED: "yes" })).toThrow(

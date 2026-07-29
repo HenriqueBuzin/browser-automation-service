@@ -120,16 +120,16 @@ vi.mock("../src/application/weighted-semaphore.js", () => ({
 vi.mock("../src/application/capability-manifests.js", () => ({
   capabilityManifests: () => [],
 }));
-vi.mock("../src/application/provider-registry.js", () => ({
-  ProviderRegistry: class {
+vi.mock("../src/application/adapter-registry.js", () => ({
+  AdapterRegistry: class {
     constructor(providers: unknown[]) {
       mocks.providerArguments.push(providers);
     }
     capabilities() {
       return [
-        { browser: "chromium", engine: "playwright" },
-        { browser: "firefox", engine: "puppeteer" },
-        { browser: "edge", engine: "selenium" },
+        { browser: "chromium", adapter: "playwright" },
+        { browser: "firefox", adapter: "puppeteer" },
+        { browser: "edge", adapter: "selenium" },
       ];
     }
   },
@@ -141,34 +141,34 @@ vi.mock("../src/application/session-connector-registry.js", () => ({
     }
   },
 }));
-vi.mock("../src/infrastructure/providers/playwright-provider.js", () => ({
-  PlaywrightProvider: class {
-    engine = "playwright";
+vi.mock("../src/infrastructure/adapters/playwright-adapter.js", () => ({
+  PlaywrightAdapter: class {
+    adapter = "playwright";
   },
 }));
-vi.mock("../src/infrastructure/providers/puppeteer-provider.js", () => ({
-  PuppeteerProvider: class {
-    engine = "puppeteer";
+vi.mock("../src/infrastructure/adapters/puppeteer-adapter.js", () => ({
+  PuppeteerAdapter: class {
+    adapter = "puppeteer";
   },
 }));
-vi.mock("../src/infrastructure/providers/selenium-provider.js", () => ({
-  SeleniumProvider: class {
-    engine = "selenium";
+vi.mock("../src/infrastructure/adapters/selenium-adapter.js", () => ({
+  SeleniumAdapter: class {
+    adapter = "selenium";
   },
 }));
 vi.mock("../src/infrastructure/sessions/playwright-session.js", () => ({
   PlaywrightSessionConnector: class {
-    driver = "playwright";
+    adapter = "playwright";
   },
 }));
 vi.mock("../src/infrastructure/sessions/puppeteer-session.js", () => ({
   PuppeteerSessionConnector: class {
-    driver = "puppeteer";
+    adapter = "puppeteer";
   },
 }));
 vi.mock("../src/infrastructure/sessions/selenium-session.js", () => ({
   SeleniumSessionConnector: class {
-    driver = "selenium";
+    adapter = "selenium";
   },
 }));
 vi.mock("../src/infrastructure/queue/bullmq-worker-host.js", () => ({
@@ -211,7 +211,7 @@ function config(overrides: Partial<AppConfig> = {}): AppConfig {
     swaggerEnabled: true,
     workerCapacityUnits: 2,
     workerConcurrency: 1,
-    workerDriver: undefined,
+    workerAdapter: undefined,
     ...overrides,
   };
 }
@@ -291,28 +291,28 @@ describe("platform composition root", () => {
         appRole: "worker",
         seleniumBrowsers: ["edge"],
         seleniumRemoteUrl: "http://grid",
-        workerDriver: "selenium",
+        workerAdapter: "selenium",
       }),
       new AbortController().signal,
     );
     expect(mocks.providerArguments[0]).toHaveLength(3);
     expect(
-      mocks.connectorArguments[0]?.map((connector) => (connector as { driver: string }).driver),
+      mocks.connectorArguments[0]?.map((connector) => (connector as { adapter: string }).adapter),
     ).toEqual(["playwright", "puppeteer", "selenium"]);
     expect(mocks.worker.waitUntilReady).toHaveBeenCalled();
     await running.close();
     expect(mocks.worker.close).toHaveBeenCalled();
   });
 
-  it("omits Selenium without a Grid and defends against a missing worker driver", async () => {
+  it("omits Selenium without a Grid and defends against a missing worker adapter", async () => {
     await expect(
       startPlatform(
-        config({ appRole: "worker", workerDriver: undefined }),
+        config({ appRole: "worker", workerAdapter: undefined }),
         new AbortController().signal,
       ),
-    ).rejects.toThrow("WORKER_DRIVER is required");
+    ).rejects.toThrow("WORKER_ADAPTER is required");
     await startPlatform(
-      config({ appRole: "worker", workerDriver: "playwright" }),
+      config({ appRole: "worker", workerAdapter: "playwright" }),
       new AbortController().signal,
     );
     expect(mocks.providerArguments.at(-1)).toHaveLength(2);

@@ -18,9 +18,9 @@ export class OutboxDispatcher {
     let published = 0;
     for (const message of messages) {
       try {
-        const driver = message.topic.replace("execution.", "") as
+        const adapter = message.topic.replace("execution.", "") as
           "playwright" | "puppeteer" | "selenium";
-        await this.queue.enqueue(message.executionId, driver);
+        await this.queue.enqueue(message.executionId, adapter);
         await this.repository.markOutboxPublished(message.id, this.now());
         this.observability.outboxPublished("published");
         published += 1;

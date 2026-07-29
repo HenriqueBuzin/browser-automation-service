@@ -11,9 +11,9 @@ flowchart LR
     PG --> OUT["Outbox transacional"]
     DISP["Dispatcher"] --> OUT
     DISP --> REDIS[("Redis / BullMQ")]
-    REDIS --> WP["Worker Playwright"]
-    REDIS --> WPP["Worker Puppeteer"]
-    REDIS --> WS["Worker Selenium"]
+    REDIS --> WP["Adapter Playwright"]
+    REDIS --> WPP["Adapter Puppeteer"]
+    REDIS --> WS["Adapter Selenium"]
     WP --> B1["Chromium / Firefox / WebKit"]
     WPP --> B2["Chromium / Firefox"]
     WS --> GRID["Grid: Chromium / Firefox / Edge"]
@@ -29,10 +29,11 @@ O sistema é dividido em três papéis de processo:
 
 - `api`: autentica, valida, compila, persiste e consulta;
 - `dispatcher`: publica a outbox e remove artefatos expirados;
-- `worker`: consome uma fila de driver, faz claim atômico, cria a sessão nativa e executa o plano.
+- `worker`: consome uma fila de adapter, faz claim atômico, cria a sessão nativa e executa o plano.
 
-Todos usam o mesmo artefato TypeScript, selecionado por `APP_ROLE`. Workers são separados por driver
-para permitir imagens, concorrência e escalabilidade diferentes.
+O control plane usa o artefato TypeScript selecionado por `APP_ROLE`. Cada adapter possui fila,
+processo, imagem, dependências, concorrência e escala independentes. Apenas adapters que publicam
+capacidades executáveis entram na matriz.
 
 ## Contrato e compilador
 
@@ -45,8 +46,8 @@ AutomationJobSchema -> JobCompiler -> ExecutionPlan[] -> ExecutionRecord[]
 Regras da expansão:
 
 1. sem filtros: todas as capacidades anunciadas;
-2. somente `drivers`: todos os navegadores disponíveis nesses drivers;
-3. somente `browsers`: os navegadores solicitados em todos os drivers disponíveis;
+2. somente `adapters`: todos os navegadores disponíveis nesses adapters;
+3. somente `browsers`: os navegadores solicitados em todos os adapters disponíveis;
 4. ambos: produto cartesiano solicitado;
 5. combinação inexistente: execução terminal `unsupported`.
 
@@ -60,7 +61,7 @@ arbitrário e mantém comportamento verificável.
 O PostgreSQL é a fonte de verdade:
 
 - `browser_jobs`: definição, cliente, idempotência e estado agregado;
-- `browser_executions`: uma linha por driver/navegador;
+- `browser_executions`: uma linha por adapter/navegador;
 - `browser_outbox`: mensagens criadas na mesma transação do job;
 - `browser_artifacts`: metadados e caminho do conteúdo;
 - `browser_api_clients`: hash, escopos e ativação.
@@ -70,12 +71,20 @@ transação. O dispatcher usa `FOR UPDATE SKIP LOCKED`, publica no BullMQ e some
 mensagem como entregue. Se Redis estiver indisponível, a mensagem é desbloqueada e tentada
 novamente.
 
-BullMQ possui uma fila por driver:
+BullMQ possui uma fila por adapter:
 
 ```text
 browser-execution-playwright
 browser-execution-puppeteer
 browser-execution-selenium
+browser-execution-webdriverio
+browser-execution-nightwatch
+browser-execution-testcafe
+browser-execution-taiko
+browser-execution-cypress
+browser-execution-cdp
+browser-execution-webdriver-bidi
+browser-execution-appium
 ```
 
 O ID da execução é também o `jobId` do BullMQ, reduzindo duplicação acidental. O estado final sempre
@@ -88,11 +97,11 @@ O worker:
 1. valida se a execução ainda está `queued`;
 2. adquire unidades do semáforo local;
 3. marca `running` e incrementa a tentativa;
-4. abre provider e session connector;
+4. resolve o adapter e abre sua sessão ou runner nativo;
 5. verifica cancelamento antes de cada passo;
 6. executa a DSL;
 7. persiste artefatos e outputs;
-8. fecha sessão/provider e libera capacidade.
+8. fecha sessão/runner e libera capacidade.
 
 WebKit consome duas unidades, pois costuma exigir mais recursos na VPS. A concorrência BullMQ limita
 jobs simultâneos e o semáforo ponderado limita a pressão real sobre o container.
@@ -164,7 +173,7 @@ Quando `OTEL_EXPORTER_OTLP_ENDPOINT` está definido:
 
 - traces: `/v1/traces`;
 - métricas: `/v1/metrics`;
-- atributos: job, execução, driver, navegador, status e duração.
+- atributos: job, execução, adapter, navegador, status e duração.
 
 Health checks distinguem processo vivo de dependências prontas. O shutdown interrompe consumo, fecha
 servidor, filas, pool e telemetria.
@@ -180,12 +189,12 @@ Reutilizar o Redis do NSC Bot é tecnicamente possível, mas não é o padrão r
 - SLA comum aceito;
 - monitoramento de latência e backlog.
 
-Sem essas garantias, use o Redis dedicado do Compose para que uma falha ou limpeza do NSC Bot não
-interrompa os jobs de navegador.
+Sem essas garantias, use uma credencial, database e política de retenção dedicados no Redis externo
+da VPS para que uma falha ou limpeza de outro serviço não interrompa os jobs de navegador.
 
-## Limites deliberados do Automation Plan v1
+## Limites deliberados do Automation Plan v2
 
-Ficam fora até existir semântica equivalente nos três drivers:
+Ficam fora até existir semântica equivalente nos três adapters:
 
 - JavaScript arbitrário;
 - interceptação de rede;
@@ -195,7 +204,7 @@ Ficam fora até existir semântica equivalente nos três drivers:
 - perfis persistentes.
 
 Esses recursos devem entrar como ações portáteis versionadas ou como um serviço especializado, não
-como escapes específicos de driver dentro do mesmo job.
+como escapes específicos de adapter dentro do mesmo job.
 
 ## Testes
 

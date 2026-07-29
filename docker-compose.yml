@@ -113,17 +113,19 @@ services:
     environment:
       <<: *platform-environment
       APP_ROLE: worker
-      WORKER_DRIVER: playwright
+      WORKER_ADAPTER: playwright
       WORKER_CONCURRENCY: ${PLAYWRIGHT_CONCURRENCY:-2}
       WORKER_CAPACITY_UNITS: ${PLAYWRIGHT_CAPACITY_UNITS:-3}
     shm_size: "1gb"
     volumes:
       - artifacts:/data/artifacts
     networks:
-      - browser-automation-internal
-      - postgres-network
-      - redis-network
-      - browser-automation-network
+      browser-automation-internal:
+      postgres-network:
+      redis-network:
+      browser-automation-network:
+        aliases:
+          - browser-adapter-playwright-dev
 
   worker-puppeteer:
     <<: *platform-service
@@ -131,17 +133,19 @@ services:
     environment:
       <<: *platform-environment
       APP_ROLE: worker
-      WORKER_DRIVER: puppeteer
+      WORKER_ADAPTER: puppeteer
       WORKER_CONCURRENCY: ${PUPPETEER_CONCURRENCY:-2}
       WORKER_CAPACITY_UNITS: ${PUPPETEER_CAPACITY_UNITS:-2}
     shm_size: "1gb"
     volumes:
       - artifacts:/data/artifacts
     networks:
-      - browser-automation-internal
-      - postgres-network
-      - redis-network
-      - browser-automation-network
+      browser-automation-internal:
+      postgres-network:
+      redis-network:
+      browser-automation-network:
+        aliases:
+          - browser-adapter-puppeteer-dev
 
   worker-selenium:
     <<: *platform-service
@@ -152,7 +156,7 @@ services:
     environment:
       <<: *platform-environment
       APP_ROLE: worker
-      WORKER_DRIVER: selenium
+      WORKER_ADAPTER: selenium
       BROWSER_SELENIUM_REMOTE_URL: http://selenium-hub:4444/wd/hub
       SELENIUM_BROWSERS: chromium,firefox,edge
       WORKER_CONCURRENCY: ${SELENIUM_CONCURRENCY:-3}
@@ -160,9 +164,12 @@ services:
     volumes:
       - artifacts:/data/artifacts
     networks:
-      - browser-automation-internal
-      - postgres-network
-      - redis-network
+      browser-automation-internal:
+      postgres-network:
+      redis-network:
+      browser-automation-network:
+        aliases:
+          - browser-adapter-selenium-dev
 
   selenium-hub:
     image: selenium/hub:4.46.0

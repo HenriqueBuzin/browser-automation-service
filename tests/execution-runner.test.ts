@@ -1,11 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
 import { ExecutionRunner } from "../src/application/execution-runner.js";
-import { ProviderRegistry } from "../src/application/provider-registry.js";
+import { AdapterRegistry } from "../src/application/adapter-registry.js";
 import { SessionConnectorRegistry } from "../src/application/session-connector-registry.js";
 import { WeightedSemaphore } from "../src/application/weighted-semaphore.js";
 import { InMemoryJobRepository } from "../src/infrastructure/persistence/in-memory-job-repository.js";
 import type { ArtifactStore } from "../src/ports/artifact-store.js";
-import type { AutomationProvider, ProviderSession } from "../src/domain/automation-provider.js";
+import type { AdapterRuntime, AdapterSession } from "../src/domain/automation-adapter.js";
 import { fakeSession } from "./helpers/fake-session.js";
 import { executionRecord, fixedNow, jobDefinition, jobRecord } from "./helpers/records.js";
 
@@ -21,17 +21,17 @@ function setup(
   const job = jobRecord({ definition: options.definition ?? jobDefinition() });
   void repository.createJob(job, [execution], []);
   const closeProvider = vi.fn(async () => undefined);
-  const providerSession: ProviderSession = {
+  const providerSession: AdapterSession = {
     browser: "chromium",
     close: closeProvider,
     endpoint: "ws://browser",
-    engine: "playwright",
+    adapter: "playwright",
     onClose: vi.fn(),
     protocol: "playwright",
   };
-  const provider: AutomationProvider = {
+  const provider: AdapterRuntime = {
     browsers: ["chromium"],
-    engine: "playwright",
+    adapter: "playwright",
     launch: options.launchError
       ? vi.fn(async () => Promise.reject(options.launchError))
       : vi.fn(async () => providerSession),
@@ -40,7 +40,7 @@ function setup(
   const connector = {
     browser: "chromium" as const,
     connect: vi.fn(async () => session),
-    driver: "playwright" as const,
+    adapter: "playwright" as const,
   };
   const artifacts: ArtifactStore = {
     open: vi.fn(async () => Buffer.alloc(0)),
@@ -59,7 +59,7 @@ function setup(
   let nextId = 10;
   const runner = new ExecutionRunner(
     "playwright",
-    new ProviderRegistry([provider]),
+    new AdapterRegistry([provider]),
     new SessionConnectorRegistry([connector]),
     repository,
     artifacts,
@@ -192,7 +192,7 @@ describe("ExecutionRunner", () => {
     await context.runner.execute("missing");
     context.repository.executions.set(
       context.execution.id,
-      executionRecord({ driver: "selenium" }),
+      executionRecord({ adapter: "selenium" }),
     );
     await context.runner.execute(context.execution.id);
     context.repository.executions.set(context.execution.id, executionRecord({ status: "passed" }));

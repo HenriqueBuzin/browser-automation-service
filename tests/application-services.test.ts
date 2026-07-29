@@ -56,8 +56,8 @@ function artifactStore(overrides: Partial<ArtifactStore> = {}): ArtifactStore {
 function service(repository: InMemoryJobRepository, maxActive = 10): SubmitJob {
   return new SubmitJob(
     new JobCompiler([
-      { actions: ["goto"], browser: "chromium", driver: "playwright" },
-      { actions: [], browser: "firefox", driver: "puppeteer" },
+      { actions: ["goto"], browser: "chromium", adapter: "playwright" },
+      { actions: [], browser: "firefox", adapter: "puppeteer" },
     ]),
     new DestinationPolicy([], async () => [{ address: "8.8.8.8", family: 4 }]),
     repository,
@@ -144,7 +144,7 @@ describe("SubmitJob and in-memory persistence", () => {
         compile: () => [
           {
             browser: "edge" as const,
-            driver: "selenium" as const,
+            adapter: "selenium" as const,
             supported: false,
           },
         ],
@@ -272,7 +272,7 @@ describe("dispatcher, job service, janitor and capacity", () => {
     const job = jobRecord();
     const first = executionRecord();
     const second = executionRecord({
-      driver: "selenium",
+      adapter: "selenium",
       id: "00000000-0000-4000-8000-000000000003",
     });
     await repository.createJob(

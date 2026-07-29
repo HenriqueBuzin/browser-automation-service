@@ -10,8 +10,8 @@ describe("hardening primitives", () => {
   it("canonicalizes object keys while preserving array order", () => {
     expect(canonicalJson({ b: 2, ignored: undefined, a: [2, 1] })).toBe('{"a":[2,1],"b":2}');
     expect(definitionFingerprint(jobDefinition())).toHaveLength(64);
-    expect(canonicalJson({ steps: [{ url: "x", action: "goto" }], schemaVersion: 1 })).toBe(
-      canonicalJson({ schemaVersion: 1, steps: [{ action: "goto", url: "x" }] }),
+    expect(canonicalJson({ steps: [{ url: "x", action: "goto" }], schemaVersion: 2 })).toBe(
+      canonicalJson({ schemaVersion: 2, steps: [{ action: "goto", url: "x" }] }),
     );
   });
 

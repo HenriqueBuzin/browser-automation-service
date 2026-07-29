@@ -29,7 +29,7 @@ CREATE TABLE IF NOT EXISTS browser_api_clients (
 CREATE TABLE IF NOT EXISTS browser_executions (
   id uuid PRIMARY KEY,
   job_id uuid NOT NULL REFERENCES browser_jobs(id) ON DELETE CASCADE,
-  driver varchar(20) NOT NULL,
+  adapter varchar(20) NOT NULL,
   browser varchar(20) NOT NULL,
   status varchar(20) NOT NULL,
   attempt integer NOT NULL DEFAULT 0,

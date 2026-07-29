@@ -11,14 +11,14 @@ import { BullMqExecutionQueue } from "./infrastructure/queue/bullmq-execution-qu
 import { BullMqWorkerHost } from "./infrastructure/queue/bullmq-worker-host.js";
 import { PostgresJobRepository } from "./infrastructure/persistence/postgres-job-repository.js";
 import { runMigrations } from "./infrastructure/persistence/migrations.js";
-import { PlaywrightProvider } from "./infrastructure/providers/playwright-provider.js";
-import { PuppeteerProvider } from "./infrastructure/providers/puppeteer-provider.js";
-import { SeleniumProvider } from "./infrastructure/providers/selenium-provider.js";
+import { PlaywrightAdapter } from "./infrastructure/adapters/playwright-adapter.js";
+import { PuppeteerAdapter } from "./infrastructure/adapters/puppeteer-adapter.js";
+import { SeleniumAdapter } from "./infrastructure/adapters/selenium-adapter.js";
 import { PlaywrightSessionConnector } from "./infrastructure/sessions/playwright-session.js";
 import { PuppeteerSessionConnector } from "./infrastructure/sessions/puppeteer-session.js";
 import { SeleniumSessionConnector } from "./infrastructure/sessions/selenium-session.js";
 import { buildPlatformServer } from "./interfaces/platform-http-server.js";
-import { ProviderRegistry } from "./application/provider-registry.js";
+import { AdapterRegistry } from "./application/adapter-registry.js";
 import { SessionConnectorRegistry } from "./application/session-connector-registry.js";
 import { ExecutionRunner } from "./application/execution-runner.js";
 import { JobCompiler } from "./application/job-compiler.js";
@@ -126,23 +126,23 @@ export async function startPlatform(
     };
   }
 
-  const driver = config.workerDriver;
-  if (!driver) throw new Error("WORKER_DRIVER is required");
-  const providers = createProviders(config);
+  const adapter = config.workerAdapter;
+  if (!adapter) throw new Error("WORKER_ADAPTER is required");
+  const adapters = createAdapters(config);
   const connectors = new SessionConnectorRegistry(
-    providers.capabilities().map((capability) => {
-      if (capability.engine === "playwright") {
+    adapters.capabilities().map((capability) => {
+      if (capability.adapter === "playwright") {
         return new PlaywrightSessionConnector(capability.browser);
       }
-      if (capability.engine === "puppeteer") {
+      if (capability.adapter === "puppeteer") {
         return new PuppeteerSessionConnector(capability.browser);
       }
       return new SeleniumSessionConnector(capability.browser);
     }),
   );
   const runner = new ExecutionRunner(
-    driver,
-    providers,
+    adapter,
+    adapters,
     connectors,
     repository,
     artifacts,
@@ -151,7 +151,7 @@ export async function startPlatform(
     undefined,
     logger,
   );
-  const worker = new BullMqWorkerHost(config.redisUrl, driver, runner, config.workerConcurrency);
+  const worker = new BullMqWorkerHost(config.redisUrl, adapter, runner, config.workerConcurrency);
   await worker.waitUntilReady();
   return {
     close: async () => {
@@ -162,12 +162,12 @@ export async function startPlatform(
   };
 }
 
-function createProviders(config: AppConfig): ProviderRegistry {
-  return new ProviderRegistry([
-    new PlaywrightProvider(),
-    new PuppeteerProvider(),
+function createAdapters(config: AppConfig): AdapterRegistry {
+  return new AdapterRegistry([
+    new PlaywrightAdapter(),
+    new PuppeteerAdapter(),
     ...(config.seleniumRemoteUrl
-      ? [new SeleniumProvider(config.seleniumRemoteUrl, config.seleniumBrowsers)]
+      ? [new SeleniumAdapter(config.seleniumRemoteUrl, config.seleniumBrowsers)]
       : []),
   ]);
 }

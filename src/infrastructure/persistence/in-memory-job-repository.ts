@@ -77,12 +77,12 @@ export class InMemoryJobRepository implements JobRepository {
 
   public claimExecution(
     id: string,
-    driver: ExecutionRecord["driver"],
+    adapter: ExecutionRecord["adapter"],
     now: Date,
   ): Promise<ExecutionRecord | undefined> {
     const current = this.executions.get(id);
     const job = current ? this.jobs.get(current.jobId) : undefined;
-    if (current?.driver !== driver || current.status !== "queued" || job?.status === "canceled") {
+    if (current?.adapter !== adapter || current.status !== "queued" || job?.status === "canceled") {
       return Promise.resolve(undefined);
     }
     const claimed = {
@@ -173,7 +173,7 @@ export class InMemoryJobRepository implements JobRepository {
       attempt: execution.attempt,
       browser: execution.browser,
       createdAt: execution.createdAt,
-      driver: execution.driver,
+      adapter: execution.adapter,
       id: execution.id,
       jobId: execution.jobId,
       outputs: {},

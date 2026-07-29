@@ -5,9 +5,21 @@ const BrowserSchema = Type.Union(
   { $id: "AutomationBrowser" },
 );
 
-const DriverSchema = Type.Union(
-  [Type.Literal("playwright"), Type.Literal("puppeteer"), Type.Literal("selenium")],
-  { $id: "AutomationDriver" },
+const AdapterSchema = Type.Union(
+  [
+    Type.Literal("playwright"),
+    Type.Literal("puppeteer"),
+    Type.Literal("selenium"),
+    Type.Literal("webdriverio"),
+    Type.Literal("nightwatch"),
+    Type.Literal("testcafe"),
+    Type.Literal("taiko"),
+    Type.Literal("cypress"),
+    Type.Literal("cdp"),
+    Type.Literal("webdriver-bidi"),
+    Type.Literal("appium"),
+  ],
+  { $id: "AutomationAdapter" },
 );
 
 const Selector = Type.String({ minLength: 1, maxLength: 2_000 });
@@ -147,10 +159,10 @@ export const AutomationJobSchema = Type.Object(
       minLength: 2,
       pattern: "^[a-zA-Z0-9][a-zA-Z0-9._-]{1,63}$",
     }),
-    drivers: Type.Optional(
-      Type.Array(DriverSchema, { maxItems: 3, minItems: 1, uniqueItems: true }),
+    adapters: Type.Optional(
+      Type.Array(AdapterSchema, { maxItems: 11, minItems: 1, uniqueItems: true }),
     ),
-    schemaVersion: Type.Literal(1),
+    schemaVersion: Type.Literal(2),
     steps: Type.Array(AutomationStepSchema, { maxItems: 100, minItems: 1 }),
   },
   { $id: "AutomationJob", additionalProperties: false },
@@ -166,7 +178,7 @@ export const SubmitJobHeadersSchema = Type.Object(
 export type AutomationJob = Static<typeof AutomationJobSchema>;
 export type AutomationStep = Static<typeof AutomationStepSchema>;
 export type AutomationBrowser = Static<typeof BrowserSchema>;
-export type AutomationEngine = Static<typeof DriverSchema>;
+export type AutomationAdapter = Static<typeof AdapterSchema>;
 export type ExtractKind = Static<typeof ExtractKindSchema>;
 export type MouseButton = "left" | "middle" | "right";
 export type SelectorState = "attached" | "detached" | "visible" | "hidden";

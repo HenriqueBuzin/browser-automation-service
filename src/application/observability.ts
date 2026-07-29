@@ -23,7 +23,7 @@ export class PlatformObservability {
   } {
     const attributes = {
       "browser.name": execution.browser,
-      "browser.driver": execution.driver,
+      "browser.adapter": execution.adapter,
       "execution.id": execution.id,
       "job.id": execution.jobId,
     };

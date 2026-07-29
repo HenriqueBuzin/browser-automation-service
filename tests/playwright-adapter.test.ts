@@ -75,7 +75,7 @@ vi.mock("playwright", () => ({
   webkit: mocks.webkit,
 }));
 
-import { PlaywrightProvider } from "../src/infrastructure/providers/playwright-provider.js";
+import { PlaywrightAdapter } from "../src/infrastructure/adapters/playwright-adapter.js";
 import { PlaywrightSessionConnector } from "../src/infrastructure/sessions/playwright-session.js";
 
 beforeEach(() => {
@@ -99,7 +99,7 @@ describe("Playwright adapter", () => {
     ["firefox", mocks.firefox],
     ["webkit", mocks.webkit],
   ] as const)("launches %s and exposes a close-aware provider session", async (browser, type) => {
-    const session = await new PlaywrightProvider().launch("execution", browser);
+    const session = await new PlaywrightAdapter().launch("execution", browser);
     expect(type.launchServer).toHaveBeenCalledWith({
       chromiumSandbox: false,
       headless: true,
@@ -108,7 +108,7 @@ describe("Playwright adapter", () => {
     expect(session).toMatchObject({
       browser,
       endpoint: "ws://playwright",
-      engine: "playwright",
+      adapter: "playwright",
       protocol: "playwright",
     });
     const listener = vi.fn();

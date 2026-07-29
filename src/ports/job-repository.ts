@@ -19,7 +19,7 @@ export type JobRepository = {
   claimExpiredArtifacts: (before: Date, limit: number, now: Date) => Promise<ArtifactRecord[]>;
   claimExecution: (
     id: string,
-    driver: ExecutionRecord["driver"],
+    adapter: ExecutionRecord["adapter"],
     now: Date,
   ) => Promise<ExecutionRecord | undefined>;
   claimOutbox: (limit: number) => Promise<OutboxMessage[]>;

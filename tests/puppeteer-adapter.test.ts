@@ -66,7 +66,7 @@ vi.mock("puppeteer-core", () => ({
   },
 }));
 
-import { PuppeteerProvider } from "../src/infrastructure/providers/puppeteer-provider.js";
+import { PuppeteerAdapter } from "../src/infrastructure/adapters/puppeteer-adapter.js";
 import { PuppeteerSessionConnector } from "../src/infrastructure/sessions/puppeteer-session.js";
 
 class FakeInput {
@@ -108,7 +108,7 @@ describe("Puppeteer adapter", () => {
   ] as const)(
     "launches %s with its real protocol",
     async (browser, browserOption, protocol, path) => {
-      const session = await new PuppeteerProvider().launch("execution", browser);
+      const session = await new PuppeteerAdapter().launch("execution", browser);
       expect(mocks.launch).toHaveBeenCalledWith({
         args: ["--no-sandbox"],
         browser: browserOption,
@@ -118,7 +118,7 @@ describe("Puppeteer adapter", () => {
       expect(session).toMatchObject({
         browser,
         endpoint: "ws://puppeteer",
-        engine: "puppeteer",
+        adapter: "puppeteer",
         nativeHandle: mocks.browser,
         protocol,
       });
@@ -133,7 +133,7 @@ describe("Puppeteer adapter", () => {
   it("uses configured executables and rejects unsupported browsers", async () => {
     process.env.PUPPETEER_EXECUTABLE_PATH = " /custom/chrome ";
     process.env.PUPPETEER_FIREFOX_EXECUTABLE_PATH = " /custom/firefox ";
-    const provider = new PuppeteerProvider();
+    const provider = new PuppeteerAdapter();
     await provider.launch("execution", "chromium");
     await provider.launch("execution", "firefox");
     const launchCalls = mocks.launch.mock.calls as unknown[][];

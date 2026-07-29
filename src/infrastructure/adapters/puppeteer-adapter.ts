@@ -2,13 +2,13 @@ import { chromium, firefox } from "playwright";
 import puppeteer from "puppeteer-core";
 import type {
   AutomationBrowser,
-  AutomationProvider,
-  ProviderSession,
-} from "../../domain/automation-provider.js";
+  AdapterRuntime,
+  AdapterSession,
+} from "../../domain/automation-adapter.js";
 
-export class PuppeteerProvider implements AutomationProvider {
+export class PuppeteerAdapter implements AdapterRuntime {
   public readonly browsers = ["chromium", "firefox"] as const;
-  public readonly engine = "puppeteer";
+  public readonly adapter = "puppeteer";
 
   public constructor(
     private readonly executablePaths: Record<"chromium" | "firefox", string> = {
@@ -17,7 +17,7 @@ export class PuppeteerProvider implements AutomationProvider {
     },
   ) {}
 
-  public async launch(_leaseId: string, browserName: AutomationBrowser): Promise<ProviderSession> {
+  public async launch(_leaseId: string, browserName: AutomationBrowser): Promise<AdapterSession> {
     if (browserName !== "chromium" && browserName !== "firefox") {
       throw new Error(`Puppeteer cannot launch ${browserName}`);
     }
@@ -33,7 +33,7 @@ export class PuppeteerProvider implements AutomationProvider {
         await browser.close();
       },
       endpoint: browser.wsEndpoint(),
-      engine: this.engine,
+      adapter: this.adapter,
       nativeHandle: browser,
       onClose: (listener) => {
         browser.once("disconnected", listener);

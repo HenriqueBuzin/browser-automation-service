@@ -8,18 +8,18 @@ export function capabilityManifests(
     ...(["chromium", "firefox", "webkit"] as const).map((browser) => ({
       actions: portableActions,
       browser,
-      driver: "playwright" as const,
+      adapter: "playwright" as const,
     })),
     ...(["chromium", "firefox"] as const).map((browser) => ({
       actions: portableActions,
       browser,
-      driver: "puppeteer" as const,
+      adapter: "puppeteer" as const,
     })),
     ...(config.seleniumRemoteUrl
       ? config.seleniumBrowsers.map((browser) => ({
           actions: portableActions,
           browser,
-          driver: "selenium" as const,
+          adapter: "selenium" as const,
         }))
       : []),
   ];

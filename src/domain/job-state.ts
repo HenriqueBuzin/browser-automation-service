@@ -1,6 +1,6 @@
 import type {
   AutomationBrowser,
-  AutomationEngine,
+  AutomationAdapter,
   AutomationJob,
 } from "../contracts/job-contract.js";
 
@@ -41,7 +41,7 @@ export type ExecutionRecord = {
   attempt: number;
   browser: AutomationBrowser;
   createdAt: Date;
-  driver: AutomationEngine;
+  adapter: AutomationAdapter;
   error?: {
     category: FailureCategory;
     message: string;
@@ -62,7 +62,7 @@ export type OutboxMessage = {
   executionId: string;
   id: string;
   publishedAt?: Date;
-  topic: `execution.${AutomationEngine}`;
+  topic: `execution.${AutomationAdapter}`;
 };
 
 export function aggregateJobStatus(executions: ExecutionRecord[]): JobStatus {

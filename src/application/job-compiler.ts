@@ -1,6 +1,6 @@
 import type {
   AutomationBrowser,
-  AutomationEngine,
+  AutomationAdapter,
   AutomationJob,
   AutomationStep,
 } from "../contracts/job-contract.js";
@@ -32,12 +32,12 @@ export const portableActions: AutomationStep["action"][] = [
 export type CapabilityManifest = {
   actions: readonly AutomationStep["action"][];
   browser: AutomationBrowser;
-  driver: AutomationEngine;
+  adapter: AutomationAdapter;
 };
 
 export type ExecutionPlan = {
   browser: AutomationBrowser;
-  driver: AutomationEngine;
+  adapter: AutomationAdapter;
   reason?: string;
   supported: boolean;
 };
@@ -51,30 +51,32 @@ export class JobCompiler {
 
   public compile(job: AutomationJob): ExecutionPlan[] {
     validateNavigationProtocols(job.steps);
-    const availableDrivers = [...new Set(this.capabilities.map((capability) => capability.driver))];
-    if (!job.drivers && !job.browsers) {
+    const availableAdapters = [
+      ...new Set(this.capabilities.map((capability) => capability.adapter)),
+    ];
+    if (!job.adapters && !job.browsers) {
       return this.capabilities.map((capability) => this.#plan(job, capability));
     }
 
-    const drivers = job.drivers ?? availableDrivers;
+    const adapters = job.adapters ?? availableAdapters;
     if (!job.browsers) {
       return this.capabilities
-        .filter((capability) => drivers.includes(capability.driver))
+        .filter((capability) => adapters.includes(capability.adapter))
         .map((capability) => this.#plan(job, capability));
     }
 
     const browsers = job.browsers;
-    return drivers.flatMap((driver) =>
+    return adapters.flatMap((adapter) =>
       browsers.map((browser) => {
         const capability = this.capabilities.find(
-          (candidate) => candidate.driver === driver && candidate.browser === browser,
+          (candidate) => candidate.adapter === adapter && candidate.browser === browser,
         );
         return capability
           ? this.#plan(job, capability)
           : {
               browser,
-              driver,
-              reason: `${driver} does not support ${browser} in this deployment`,
+              adapter,
+              reason: `${adapter} does not support ${browser} in this deployment`,
               supported: false,
             };
       }),
@@ -86,13 +88,13 @@ export class JobCompiler {
     return unsupported
       ? {
           browser: capability.browser,
-          driver: capability.driver,
-          reason: `${capability.driver}/${capability.browser} does not support '${unsupported.action}'`,
+          adapter: capability.adapter,
+          reason: `${capability.adapter}/${capability.browser} does not support '${unsupported.action}'`,
           supported: false,
         }
       : {
           browser: capability.browser,
-          driver: capability.driver,
+          adapter: capability.adapter,
           supported: true,
         };
   }

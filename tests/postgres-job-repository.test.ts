@@ -17,7 +17,7 @@ const executionRow = {
   attempt: 0,
   browser: "chromium",
   created_at: fixedNow,
-  driver: "playwright",
+  adapter: "playwright",
   error: null,
   finished_at: null,
   id: "execution",

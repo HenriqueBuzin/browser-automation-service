@@ -8,13 +8,13 @@ O projeto é uma plataforma E2E autocontida e instalável em qualquer VPS com Do
 Redis. Os consumidores usam a API remota como caminho principal e mantêm Playwright local somente
 como fallback de indisponibilidade.
 
-Quando `drivers` e `browsers` não são informados, o job é executado em todas as combinações
+Quando `adapters` e `browsers` não são informados, o job é executado em todas as combinações
 habilitadas. Quando são informados, funcionam como filtros. Combinações fisicamente impossíveis,
 como Puppeteer com WebKit, são registradas como `unsupported` em vez de serem simuladas.
 
 ## Matriz
 
-| Driver     | Chromium | Firefox | WebKit | Edge |
+| Adapter    | Chromium | Firefox | WebKit | Edge |
 | ---------- | -------- | ------- | ------ | ---- |
 | Playwright | sim      | sim     | sim    | não  |
 | Puppeteer  | sim      | sim     | não    | não  |
@@ -23,13 +23,31 @@ como Puppeteer com WebKit, são registradas como `unsupported` em vez de serem s
 A instalação padrão mantém Playwright, Puppeteer e Selenium ativos, sem profiles ou flags de
 ativação, totalizando oito combinações.
 
+Os adapters adicionais são isolados por imagem e fila para não contaminar o control plane com
+dependências ou vulnerabilidades transitivas:
+
+| Adapter               | Tipo                  | Implantação                           |
+| --------------------- | --------------------- | ------------------------------------- |
+| WebdriverIO           | sessão WebDriver/BiDi | container próprio                     |
+| Nightwatch            | suíte nativa          | container próprio                     |
+| TestCafe              | suíte nativa          | container próprio                     |
+| Taiko                 | sessão CDP            | container próprio                     |
+| Cypress               | suíte nativa          | container próprio                     |
+| CDP direto            | protocolo nativo      | container próprio                     |
+| WebDriver BiDi direto | protocolo nativo      | container próprio                     |
+| Appium Android        | mobile                | worker Linux próprio                  |
+| Appium iOS            | mobile                | worker macOS nativo preparado à parte |
+
+Somente adapters que responderem ao contrato de capacidades entram na matriz. Portanto, instalar ou
+atualizar um runner não altera a API nem os demais adapters.
+
 ## Arquitetura
 
 - Node.js 24 LTS e TypeScript estrito;
 - Fastify e TypeBox como contrato HTTP/OpenAPI;
 - PostgreSQL como fonte de verdade de jobs, execuções, idempotência, clientes e artefatos;
 - outbox transacional no PostgreSQL;
-- BullMQ sobre Redis para filas separadas por driver;
+- BullMQ sobre Redis para filas separadas por adapter;
 - processos independentes para API, dispatcher e workers;
 - storage local ou S3 compatível para artefatos, selecionado por configuração;
 - migrações numeradas, transacionais e protegidas por advisory lock;
@@ -45,6 +63,9 @@ O Redis é externo na VPS e chega por `REDIS_HOST`, `REDIS_PORT`, `REDIS_DB`, `R
 Redis. Keycloak não foi colocado no caminho crítico da rede interna: a porta `Authenticator` permite
 adicioná-lo quando houver múltiplos tenants, acesso externo ou necessidade de OAuth2 client
 credentials.
+
+A versão 2 não lê o schema antigo. Use um banco vazio, por exemplo
+`POSTGRES_DB=browser_automation_v2`; não há migração ou fallback para o contrato `drivers`.
 
 Veja [a arquitetura detalhada](docs/architecture.md). Veja também a
 [política de adapters e failover dos consumidores](docs/consumer-adapters.md).
@@ -77,7 +98,7 @@ Idempotency-Key: regression-home-2026-07-26
 Content-Type: application/json
 
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "clientId": "weslei-bassotto",
   "steps": [
     { "action": "goto", "url": "https://example.com" },
@@ -104,7 +125,7 @@ Filtros opcionais:
 
 ```json
 {
-  "drivers": ["playwright", "selenium"],
+  "adapters": ["playwright", "selenium"],
   "browsers": ["chromium", "firefox"]
 }
 ```
@@ -112,7 +133,7 @@ Filtros opcionais:
 Com os dois filtros, o compilador avalia o produto cartesiano solicitado. Sem filtros, usa todas as
 capacidades anunciadas pelo deployment.
 
-### Automation Plan v1
+### Automation Plan v2
 
 - navegação: `goto`, `back`, `forward`, `reload`;
 - interação: `click`, `fill`, `type`, `press`, `hover`, `focus`, `check`, `uncheck`, `select`,
@@ -122,7 +143,7 @@ capacidades anunciadas pelo deployment.
 - validação e dados: `assert`, `extract`, `screenshot`.
 
 Esta representação intermediária pequena permite executar a mesma intenção em todos os adapters. Não
-há conversão textual entre drivers, `eval` nem JavaScript arbitrário. O plano aceita até 100 passos
+há conversão textual entre adapters, `eval` nem JavaScript arbitrário. O plano aceita até 100 passos
 e limita seletores, strings, dimensões e timeouts. Screenshots são persistidos como artefatos e o
 output contém o ID, não base64.
 
@@ -282,5 +303,5 @@ credencial estiver em uso, ela ainda pode existir transitoriamente na memória d
 2. Migre testes portáteis de Weslei Bassotto e Dias/Kovaltchuk.
 3. Migre fluxos efêmeros do NSC Bot e Whats Forms.
 4. Mantenha automações com perfil persistente fora do pool.
-5. Deixe cada consumidor filtrar engines e browsers por job quando não precisar executar a matriz
+5. Deixe cada consumidor filtrar adapters e browsers por job quando não precisar executar a matriz
    completa.

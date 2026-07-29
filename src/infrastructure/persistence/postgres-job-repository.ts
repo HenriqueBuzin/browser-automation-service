@@ -25,7 +25,7 @@ type ExecutionRow = QueryResultRow & {
   attempt: number;
   browser: ExecutionRecord["browser"];
   created_at: Date;
-  driver: ExecutionRecord["driver"];
+  adapter: ExecutionRecord["adapter"];
   error: ExecutionRecord["error"] | null;
   finished_at: Date | null;
   id: string;
@@ -151,7 +151,7 @@ export class PostgresJobRepository implements JobRepository {
 
   public async claimExecution(
     id: string,
-    driver: ExecutionRecord["driver"],
+    adapter: ExecutionRecord["adapter"],
     now: Date,
   ): Promise<ExecutionRecord | undefined> {
     const client = await this.pool.connect();
@@ -162,11 +162,11 @@ export class PostgresJobRepository implements JobRepository {
          SET status = 'running', attempt = execution.attempt + 1,
              started_at = $3, updated_at = $3
          FROM browser_jobs AS job
-         WHERE execution.id = $1 AND execution.driver = $2
+         WHERE execution.id = $1 AND execution.adapter = $2
            AND execution.status = 'queued' AND job.id = execution.job_id
            AND job.status <> 'canceled'
          RETURNING execution.*`,
-        [id, driver, now],
+        [id, adapter, now],
       );
       const row = result.rows[0];
       if (row) await updateAggregate(client, row.job_id, now);
@@ -417,12 +417,12 @@ export class PostgresJobRepository implements JobRepository {
 async function insertExecution(client: PoolClient, execution: ExecutionRecord): Promise<void> {
   await client.query(
     `INSERT INTO browser_executions
-     (id, job_id, driver, browser, status, attempt, outputs, error, created_at, updated_at)
+     (id, job_id, adapter, browser, status, attempt, outputs, error, created_at, updated_at)
      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
     [
       execution.id,
       execution.jobId,
-      execution.driver,
+      execution.adapter,
       execution.browser,
       execution.status,
       execution.attempt,
@@ -472,7 +472,7 @@ function mapExecution(row: ExecutionRow): ExecutionRecord {
     attempt: row.attempt,
     browser: row.browser,
     createdAt: row.created_at,
-    driver: row.driver,
+    adapter: row.adapter,
     ...(row.error ? { error: row.error } : {}),
     ...(row.finished_at ? { finishedAt: row.finished_at } : {}),
     id: row.id,

@@ -82,7 +82,7 @@ export async function buildPlatformServer(
     },
     async (request) => ({
       executions: dependencies.compiler.compile(request.body),
-      schemaVersion: 1,
+      schemaVersion: 2,
     }),
   );
 
@@ -235,7 +235,7 @@ function toJobResponse(result: {
     executions: result.executions.map((execution) => ({
       attempt: execution.attempt,
       browser: execution.browser,
-      driver: execution.driver,
+      adapter: execution.adapter,
       error: execution.error,
       executionId: execution.id,
       outputs: execution.outputs,

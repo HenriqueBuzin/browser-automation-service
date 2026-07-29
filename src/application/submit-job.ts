@@ -43,7 +43,7 @@ export class SubmitJob {
         attempt: 0,
         browser: plan.browser,
         createdAt: now,
-        driver: plan.driver,
+        adapter: plan.adapter,
         ...(supported
           ? {}
           : {
@@ -76,7 +76,7 @@ export class SubmitJob {
         createdAt: now,
         executionId: execution.id,
         id: this.runtime.id(),
-        topic: `execution.${execution.driver}` as const,
+        topic: `execution.${execution.adapter}` as const,
       }));
     const result = await this.repository.createJob(
       job,
