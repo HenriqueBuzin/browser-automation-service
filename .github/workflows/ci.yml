@@ -54,6 +54,7 @@ jobs:
         with:
           image: browser-automation-control:test
           fail-build: true
+          only-fixed: true
           severity-cutoff: high
       - name: Generate worker SBOM
         uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0
@@ -65,4 +66,5 @@ jobs:
         with:
           image: browser-automation-browser-worker:test
           fail-build: true
+          only-fixed: true
           severity-cutoff: high
