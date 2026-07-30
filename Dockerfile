@@ -47,6 +47,7 @@ WORKDIR /app
 
 COPY --chown=node:node package.json package-lock.json ./
 RUN apt-get update \
+    && DEBIAN_FRONTEND=noninteractive apt-get upgrade -y \
     && apt-get install -y --no-install-recommends xz-utils \
     && rm -rf /var/lib/apt/lists/* \
     && npm ci --omit=dev \
