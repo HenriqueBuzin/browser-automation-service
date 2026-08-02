@@ -1,4 +1,4 @@
-FROM node:24.18.0-bookworm AS build
+FROM node:24.18.1-bookworm AS build
 
 ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 \
     TZ=America/Sao_Paulo
@@ -17,7 +17,7 @@ COPY . ./
 
 RUN npm run check
 
-FROM node:24.18.0-bookworm-slim AS control
+FROM node:24.18.1-bookworm-slim AS control
 
 ENV NODE_ENV=production \
     PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 \
@@ -35,7 +35,7 @@ COPY --from=build /app/dist ./dist
 USER node
 CMD ["node", "dist/main.js"]
 
-FROM node:24.18.0-bookworm AS browser-worker
+FROM node:24.18.1-bookworm AS browser-worker
 
 ENV NODE_ENV=production \
     TZ=America/Sao_Paulo \
