@@ -1,0 +1,22 @@
+ignore:
+  # Playwright 1.62.x bundles Chrome for Testing 151.0.7922.34. Grype reports
+  # 151.0.7922.72 as the fix, but that Linux build is not published yet.
+  # Remove these exceptions as soon as Playwright ships the fixed Chromium.
+  - vulnerability: CVE-2026-17989
+    package: {name: chrome, version: 151.0.7922.34, type: binary}
+  - vulnerability: CVE-2026-17956
+    package: {name: chrome, version: 151.0.7922.34, type: binary}
+  - vulnerability: CVE-2026-17969
+    package: {name: chrome, version: 151.0.7922.34, type: binary}
+  - vulnerability: CVE-2026-17950
+    package: {name: chrome, version: 151.0.7922.34, type: binary}
+  - vulnerability: CVE-2026-18017
+    package: {name: chrome, version: 151.0.7922.34, type: binary}
+  - vulnerability: CVE-2026-18012
+    package: {name: chrome, version: 151.0.7922.34, type: binary}
+  - vulnerability: CVE-2026-17979
+    package: {name: chrome, version: 151.0.7922.34, type: binary}
+  - vulnerability: CVE-2026-17952
+    package: {name: chrome, version: 151.0.7922.34, type: binary}
+  - vulnerability: CVE-2026-17993
+    package: {name: chrome, version: 151.0.7922.34, type: binary}
